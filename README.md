@@ -9,7 +9,7 @@ Generate deterministic, token-efficient maps and review bundles for Python repos
 `anatomize` has two complementary workflows:
 
 1) **Skeletons**: structure-only “code maps” for navigation and architecture understanding.
-2) **Packs**: single-file bundles (repomix-style) for external review, with filtering and slicing.
+2) **Packs**: single-file bundles ([repomix](https://repomix.com/)-style) for external review, with filtering and slicing.
 
 If you want the full guide (modes, slicing, config, determinism guarantees), see `docs/GUIDE.md`.
 
