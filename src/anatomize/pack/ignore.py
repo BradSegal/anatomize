@@ -14,16 +14,23 @@ from anatomize.core.exclude import Excluder
 DEFAULT_IGNORE_PATTERNS: list[str] = [
     "__pycache__/",
     "*.pyc",
+    "*.log",
+    "*.log.*",
+    "*.tmp",
+    "*.bak",
     ".git/",
     ".venv/",
     ".mypy_cache/",
     ".pytest_cache/",
     ".ruff_cache/",
-    ".skeleton/",
+    ".anatomy/",
+    ".runtime/",
     ".tox/",
     "dist/",
     "build/",
     "*.egg-info/",
+    ".DS_Store",
+    "Thumbs.db",
 ]
 
 

@@ -68,3 +68,32 @@ def test_pack_omits_binary_contents(tmp_path: Path) -> None:
     by_path = {f["path"]: f for f in data["files"]}
     assert by_path["bin.dat"]["is_binary"] is True
     assert by_path["bin.dat"]["content"] is None
+
+
+def test_pack_default_ignores_exclude_runtime_and_logs(tmp_path: Path) -> None:
+    (tmp_path / ".runtime").mkdir()
+    (tmp_path / ".runtime" / "index.log").write_text("nope\n", encoding="utf-8")
+    (tmp_path / "kept.txt").write_text("ok\n", encoding="utf-8")
+
+    out = tmp_path / "out.json"
+    pack(
+        root=tmp_path,
+        output=out,
+        fmt=PackFormat.JSON,
+        include=[],
+        ignore=[],
+        ignore_files=[],
+        respect_standard_ignores=False,
+        symlinks=SymlinkPolicy.FORBID,
+        max_file_bytes=1_000_000,
+        token_encoding="cl100k_base",
+        compress=False,
+        entries=[],
+        deps=False,
+        python_roots=[],
+    )
+
+    data = json.loads(out.read_text(encoding="utf-8"))
+    paths = {f["path"] for f in data["files"]}
+    assert "kept.txt" in paths
+    assert ".runtime/index.log" not in paths
