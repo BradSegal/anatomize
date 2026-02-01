@@ -50,6 +50,18 @@ def render_structure_tree(paths: list[tuple[str, bool]]) -> list[str]:
 
 
 def render_token_tree(tokens_by_path: dict[str, int]) -> list[str]:
+    """Render a tree view with token counts per file.
+
+    Parameters
+    ----------
+    tokens_by_path
+        Map of relative paths to token counts.
+
+    Returns
+    -------
+    list[str]
+        Lines representing the tree with token counts.
+    """
     tree: TokenTree = {}
     for path in sorted(tokens_by_path.keys()):
         parts = [p for p in path.split("/") if p and p != "."]

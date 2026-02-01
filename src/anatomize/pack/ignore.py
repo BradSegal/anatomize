@@ -41,9 +41,31 @@ STANDARD_IGNORE_FILES: list[str] = [
     ".git/info/exclude",
 ]
 
+
 def build_excluder(
     root: Path, *, ignore: list[str], ignore_files: list[Path], respect_standard_ignores: bool
 ) -> Excluder:
+    """Build an Excluder from multiple pattern sources.
+
+    Combines default patterns, standard ignore files (gitignore, etc.),
+    custom ignore files, and CLI-provided patterns into a single Excluder.
+
+    Parameters
+    ----------
+    root
+        Root directory for resolving standard ignore file paths.
+    ignore
+        CLI-provided ignore patterns.
+    ignore_files
+        Paths to additional ignore files.
+    respect_standard_ignores
+        If True, load .gitignore and similar standard files.
+
+    Returns
+    -------
+    Excluder
+        Configured excluder instance.
+    """
     patterns: list[IgnorePattern] = []
     patterns.extend((p, "default") for p in DEFAULT_IGNORE_PATTERNS)
 

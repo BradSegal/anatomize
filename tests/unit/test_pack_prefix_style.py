@@ -41,4 +41,3 @@ def test_pack_prefix_plain_minimal_omits_notes() -> None:
     text = render_prefix(_payload(prefix_style=PrefixStyle.MINIMAL), fmt=PackFormat.PLAIN, include_structure=False)
     assert "CODE_PACK" in text
     assert "NOTES:" not in text
-

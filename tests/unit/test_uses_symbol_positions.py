@@ -12,13 +12,7 @@ pytestmark = pytest.mark.unit
 def test_positions_point_at_symbol_name_for_def_and_class(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(
-        (
-            "import typing\n\n"
-            "def f(x: int) -> int:\n"
-            "    return x + 1\n\n"
-            "class C:\n"
-            "    pass\n"
-        ),
+        ("import typing\n\n" "def f(x: int) -> int:\n" "    return x + 1\n\n" "class C:\n" "    pass\n"),
         encoding="utf-8",
     )
 
@@ -34,12 +28,7 @@ def test_positions_point_at_symbol_name_for_def_and_class(tmp_path: Path) -> Non
 def test_positions_include_private_when_requested(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(
-        (
-            "def _private() -> None:\n"
-            "    pass\n"
-            "def public() -> None:\n"
-            "    pass\n"
-        ),
+        ("def _private() -> None:\n" "    pass\n" "def public() -> None:\n" "    pass\n"),
         encoding="utf-8",
     )
 

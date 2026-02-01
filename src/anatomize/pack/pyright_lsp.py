@@ -19,6 +19,16 @@ from urllib.parse import unquote, urlparse
 
 @dataclass(frozen=True)
 class LspPosition:
+    """Zero-based position in a text document (LSP format).
+
+    Attributes
+    ----------
+    line
+        Zero-based line number.
+    character
+        Zero-based character offset within the line.
+    """
+
     line: int
     character: int
 

@@ -105,9 +105,7 @@ class PythonParser:
 
         return source[node.start_byte : node.end_byte].decode("utf-8")
 
-    def iter_children(
-        self, node: Node, *types: str, recursive: bool = False
-    ) -> list[Node]:
+    def iter_children(self, node: Node, *types: str, recursive: bool = False) -> list[Node]:
         """Iterate over children of specific types.
 
         Parameters

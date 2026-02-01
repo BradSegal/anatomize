@@ -13,12 +13,50 @@ from anatomize.core.types import ClassInfo, FunctionInfo, ModuleInfo, Resolution
 
 
 def compress_python_file(path: Path, *, module_name: str, relative_posix: str) -> str:
+    """Compress a Python file to a structural stub representation.
+
+    Extracts the module's structure at signature resolution and renders
+    it as a minimal, syntactically valid Python stub.
+
+    Parameters
+    ----------
+    path
+        Absolute path to the Python file.
+    module_name
+        Fully qualified module name (e.g., 'pkg.sub.module').
+    relative_posix
+        Path relative to the source root (POSIX style).
+
+    Returns
+    -------
+    str
+        Compressed Python stub representation.
+    """
     extractor = SymbolExtractor(resolution=ResolutionLevel.SIGNATURES)
     info = extractor.extract_module(path, module_name, relative_path=relative_posix, source=0)
     return render_module(info)
 
 
 def render_module(info: ModuleInfo) -> str:
+    """Render a ModuleInfo as a Python stub string.
+
+    Produces a deterministic, minimal representation including:
+    - Module docstring (if present)
+    - Import statements
+    - Module-level constants
+    - Function stubs with signatures
+    - Class stubs with attributes and method signatures
+
+    Parameters
+    ----------
+    info
+        Extracted module information.
+
+    Returns
+    -------
+    str
+        Python stub representation ending with a newline.
+    """
     lines: list[str] = []
     if info.doc:
         lines.append(f'""" {info.doc} """')

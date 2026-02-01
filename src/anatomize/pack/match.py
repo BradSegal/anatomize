@@ -12,6 +12,20 @@ from anatomize.core.exclude import parse_ignore_line
 
 @dataclass(frozen=True)
 class GlobRule:
+    """Parsed glob pattern rule.
+
+    Attributes
+    ----------
+    pattern
+        The glob pattern without leading/trailing slashes.
+    anchored
+        True if pattern was prefixed with '/' (match from root).
+    directory_only
+        True if pattern was suffixed with '/' (match directories only).
+    has_slash
+        True if pattern contains a path separator.
+    """
+
     pattern: str
     anchored: bool
     directory_only: bool
@@ -27,6 +41,13 @@ class GlobMatcher:
     """
 
     def __init__(self, patterns: list[str]) -> None:
+        """Initialize with a list of glob patterns.
+
+        Parameters
+        ----------
+        patterns
+            List of gitignore-style glob patterns.
+        """
         self._rules: list[GlobRule] = []
         for raw in patterns:
             parsed = parse_ignore_line(raw, allow_negation=False)
@@ -52,6 +73,20 @@ class GlobMatcher:
             )
 
     def matches_any(self, rel_posix: str, *, is_dir: bool) -> bool:
+        """Check if a path matches any pattern.
+
+        Parameters
+        ----------
+        rel_posix
+            Relative path in POSIX format.
+        is_dir
+            True if the path is a directory.
+
+        Returns
+        -------
+        bool
+            True if any pattern matches.
+        """
         rel_posix = rel_posix.strip("/")
         path = PurePosixPath(rel_posix) if rel_posix else PurePosixPath(".")
         for rule in self._rules:

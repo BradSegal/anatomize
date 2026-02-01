@@ -7,12 +7,32 @@ from enum import Enum
 
 
 class LimitKind(str, Enum):
+    """Type of output size limit.
+
+    Attributes
+    ----------
+    BYTES
+        Limit specified in bytes.
+    TOKENS
+        Limit specified in tokens.
+    """
+
     BYTES = "bytes"
     TOKENS = "tokens"
 
 
 @dataclass(frozen=True)
 class OutputLimit:
+    """Parsed output size limit.
+
+    Attributes
+    ----------
+    kind
+        Whether the limit is in bytes or tokens.
+    value
+        The numeric limit value.
+    """
+
     kind: LimitKind
     value: int
 

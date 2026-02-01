@@ -55,6 +55,7 @@ class PackConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     def model_post_init(self, __context: Any) -> None:
+        """Validate configuration after initialization."""
         if self.mode is PackMode.HYBRID and self.format not in (
             PackFormat.MARKDOWN,
             PackFormat.PLAIN,
@@ -99,6 +100,7 @@ class SkeletonSourceConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     def model_post_init(self, __context: Any) -> None:
+        """Validate and normalize the source configuration."""
         if not self.path.strip():
             raise ValueError("sources[].path must be non-empty")
         if self.output is None:
@@ -135,6 +137,18 @@ class AnatomizeConfig(BaseModel):
 
     @classmethod
     def from_file(cls, path: Path) -> AnatomizeConfig:
+        """Load configuration from a YAML file.
+
+        Parameters
+        ----------
+        path
+            Path to the .anatomize.yaml file.
+
+        Returns
+        -------
+        AnatomizeConfig
+            Parsed and validated configuration.
+        """
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         if data is None:
@@ -143,6 +157,18 @@ class AnatomizeConfig(BaseModel):
 
     @classmethod
     def find_config_path(cls, start_dir: Path | None = None) -> Path | None:
+        """Search upward for a .anatomize.yaml config file.
+
+        Parameters
+        ----------
+        start_dir
+            Directory to start searching from (defaults to cwd).
+
+        Returns
+        -------
+        Path or None
+            Path to config file if found, None otherwise.
+        """
         if start_dir is None:
             start_dir = Path.cwd()
         current = start_dir.resolve()
@@ -157,12 +183,31 @@ class AnatomizeConfig(BaseModel):
 
     @classmethod
     def find_config(cls, start_dir: Path | None = None) -> AnatomizeConfig | None:
+        """Find and load configuration from the nearest .anatomize.yaml.
+
+        Parameters
+        ----------
+        start_dir
+            Directory to start searching from (defaults to cwd).
+
+        Returns
+        -------
+        AnatomizeConfig or None
+            Loaded configuration if found, None otherwise.
+        """
         p = cls.find_config_path(start_dir=start_dir)
         if p is None:
             return None
         return cls.from_file(p)
 
     def to_yaml(self) -> str:
+        """Serialize configuration to YAML string.
+
+        Returns
+        -------
+        str
+            YAML representation of the configuration.
+        """
         data: dict[str, Any] = {
             "output": self.output,
             "sources": [

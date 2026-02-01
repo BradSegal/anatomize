@@ -72,20 +72,11 @@ def test_cli_pack_uses_pyright_include_private_when_requested(monkeypatch: pytes
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("", encoding="utf-8")
     (pkg / "a.py").write_text(
-        (
-            "def _private(x: int) -> int:\n"
-            "    return x + 1\n\n"
-            "def public(x: int) -> int:\n"
-            "    return x + 2\n"
-        ),
+        ("def _private(x: int) -> int:\n" "    return x + 1\n\n" "def public(x: int) -> int:\n" "    return x + 2\n"),
         encoding="utf-8",
     )
     (pkg / "b.py").write_text(
-        (
-            "from pkg.a import _private, public\n\n"
-            "print(_private(1))\n"
-            "print(public(1))\n"
-        ),
+        ("from pkg.a import _private, public\n\n" "print(_private(1))\n" "print(public(1))\n"),
         encoding="utf-8",
     )
 

@@ -12,4 +12,3 @@ class SymlinkPolicy(str, Enum):
     FILES = "files"
     DIRS = "dirs"
     ALL = "all"
-

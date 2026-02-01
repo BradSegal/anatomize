@@ -21,8 +21,19 @@ if TYPE_CHECKING:
 
 
 class Formatter(Protocol):
-    def write(self, skeleton: Skeleton, output_dir: Path) -> None: ...
-    def format_string(self, skeleton: Skeleton) -> str: ...
+    """Protocol for skeleton output formatters.
+
+    All formatters must implement these methods to write skeleton
+    data in their specific format.
+    """
+
+    def write(self, skeleton: Skeleton, output_dir: Path) -> None:
+        """Write skeleton to files in the output directory."""
+        ...
+
+    def format_string(self, skeleton: Skeleton) -> str:
+        """Format skeleton as a single string."""
+        ...
 
 
 class OutputFormat(str, Enum):

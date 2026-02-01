@@ -136,10 +136,10 @@ def my_func(x: int, y: str = "default", *args, **kwargs) -> bool:
         assert "kwargs" in param_names
 
     def test_get_parameters_positional_only_and_keyword_only(self, parser: PythonParser) -> None:
-        code = '''
+        code = """
 def f(a, b, /, c, *, d, e=1, *args: int, **kwargs: str):
     pass
-'''
+"""
         tree = parser.parse(code)
         funcs = parser.iter_children(tree.root_node, "function_definition")
         params = parser.get_parameters(funcs[0])
@@ -154,10 +154,10 @@ def f(a, b, /, c, *, d, e=1, *args: int, **kwargs: str):
 
     def test_get_return_type(self, parser: PythonParser) -> None:
         """Test extracting return type annotations."""
-        code = '''
+        code = """
 def my_func() -> int:
     return 42
-'''
+"""
         tree = parser.parse(code)
         funcs = parser.iter_children(tree.root_node, "function_definition")
         return_type = parser.get_return_type(funcs[0])

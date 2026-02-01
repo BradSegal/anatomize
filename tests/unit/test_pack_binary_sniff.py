@@ -19,6 +19,7 @@ def test_binary_sniff_reads_only_prefix(monkeypatch: pytest.MonkeyPatch, tmp_pat
     def open_wrapper(self: Path, mode: str = "r", *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
         f = orig_open(self, mode, *args, **kwargs)
         if self == p and "b" in mode:
+
             class _Wrapped:
                 def __init__(self, inner):  # type: ignore[no-untyped-def]
                     self._inner = inner
@@ -44,4 +45,3 @@ def test_binary_sniff_reads_only_prefix(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     _is_binary_file(p, sniff_bytes=8)
     assert read_sizes == [8]
-

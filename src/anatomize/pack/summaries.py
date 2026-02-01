@@ -17,6 +17,20 @@ from anatomize.core.types import ResolutionLevel
 
 
 class SummaryConfig(BaseModel):
+    """Configuration for summary generation limits.
+
+    Attributes
+    ----------
+    max_depth
+        Maximum nesting depth to traverse in structured data.
+    max_keys
+        Maximum number of dictionary keys to include.
+    max_items
+        Maximum total items (keys + list elements) to include.
+    max_headings
+        Maximum number of Markdown headings to extract.
+    """
+
     max_depth: int = Field(default=3, ge=1)
     max_keys: int = Field(default=200, ge=1)
     max_items: int = Field(default=200, ge=1)
@@ -26,12 +40,47 @@ class SummaryConfig(BaseModel):
 
 
 def python_summary(path: Path, *, module_name: str, relative_path: str) -> dict[str, Any]:
+    """Generate a structural summary of a Python module.
+
+    Parameters
+    ----------
+    path
+        Absolute path to the Python file.
+    module_name
+        Fully qualified module name (e.g., 'pkg.sub.module').
+    relative_path
+        Path relative to the source root (POSIX style).
+
+    Returns
+    -------
+    dict[str, Any]
+        Module info as a JSON-serializable dictionary.
+    """
     extractor = SymbolExtractor(resolution=ResolutionLevel.SIGNATURES)
     info = extractor.extract_module(path, module_name, relative_path=relative_path, source=0)
     return info.model_dump(mode="json")
 
 
 def json_summary(text: str, *, cfg: SummaryConfig) -> dict[str, Any]:
+    """Generate a structural summary of JSON content.
+
+    Parameters
+    ----------
+    text
+        Raw JSON text to parse and summarize.
+    cfg
+        Summary configuration limits.
+
+    Returns
+    -------
+    dict[str, Any]
+        Summary with type='json' and list of dotted paths.
+
+    Raises
+    ------
+    ValueError
+        If the JSON cannot be parsed.
+    """
     try:
         obj = json.loads(text)
     except json.JSONDecodeError as e:
@@ -41,6 +90,25 @@ def json_summary(text: str, *, cfg: SummaryConfig) -> dict[str, Any]:
 
 
 def yaml_summary(text: str, *, cfg: SummaryConfig) -> dict[str, Any]:
+    """Generate a structural summary of YAML content.
+
+    Parameters
+    ----------
+    text
+        Raw YAML text to parse and summarize.
+    cfg
+        Summary configuration limits.
+
+    Returns
+    -------
+    dict[str, Any]
+        Summary with type='yaml' and list of dotted paths.
+
+    Raises
+    ------
+    ValueError
+        If the YAML cannot be parsed.
+    """
     try:
         obj = yaml.safe_load(text)
     except Exception as e:
@@ -50,6 +118,25 @@ def yaml_summary(text: str, *, cfg: SummaryConfig) -> dict[str, Any]:
 
 
 def toml_summary(text: str, *, cfg: SummaryConfig) -> dict[str, Any]:
+    """Generate a structural summary of TOML content.
+
+    Parameters
+    ----------
+    text
+        Raw TOML text to parse and summarize.
+    cfg
+        Summary configuration limits.
+
+    Returns
+    -------
+    dict[str, Any]
+        Summary with type='toml' and list of dotted paths.
+
+    Raises
+    ------
+    ValueError
+        If the TOML cannot be parsed.
+    """
     try:
         obj = tomli.loads(text)
     except Exception as e:
@@ -62,6 +149,22 @@ _MD_HEADING = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<text>.+?)\s*$")
 
 
 def markdown_summary(text: str, *, cfg: SummaryConfig) -> dict[str, Any]:
+    """Generate a structural summary of Markdown content.
+
+    Extracts heading levels (1-6) and their text up to the configured limit.
+
+    Parameters
+    ----------
+    text
+        Raw Markdown text to analyze.
+    cfg
+        Summary configuration limits.
+
+    Returns
+    -------
+    dict[str, Any]
+        Summary with type='markdown' and list of headings with level and text.
+    """
     headings: list[dict[str, Any]] = []
     for line in text.splitlines():
         m = _MD_HEADING.match(line)
@@ -75,6 +178,31 @@ def markdown_summary(text: str, *, cfg: SummaryConfig) -> dict[str, Any]:
 
 
 def summary_for_text(*, suffix: str, text: str, rel_posix: str, cfg: SummaryConfig) -> dict[str, Any]:
+    """Generate a summary for text content based on file suffix.
+
+    Routes to the appropriate summary function based on file type.
+
+    Parameters
+    ----------
+    suffix
+        File extension including dot (e.g., '.json', '.yaml').
+    text
+        Raw file content.
+    rel_posix
+        Relative path for error messages.
+    cfg
+        Summary configuration limits.
+
+    Returns
+    -------
+    dict[str, Any]
+        Type-specific summary dictionary.
+
+    Raises
+    ------
+    ValueError
+        If the file type is not supported for summarization.
+    """
     suf = suffix.lower()
     if suf == ".json":
         return json_summary(text, cfg=cfg)
@@ -88,6 +216,27 @@ def summary_for_text(*, suffix: str, text: str, rel_posix: str, cfg: SummaryConf
 
 
 def summary_for_path(path: Path, *, rel_posix: str, cfg: SummaryConfig) -> dict[str, Any]:
+    """Generate a summary for a file by reading and analyzing its content.
+
+    Parameters
+    ----------
+    path
+        Absolute path to the file.
+    rel_posix
+        Relative path for error messages.
+    cfg
+        Summary configuration limits.
+
+    Returns
+    -------
+    dict[str, Any]
+        Type-specific summary dictionary.
+
+    Raises
+    ------
+    ValueError
+        If the file type is not supported for summarization.
+    """
     text = path.read_text(encoding="utf-8")
     return summary_for_text(suffix=path.suffix, text=text, rel_posix=rel_posix, cfg=cfg)
 

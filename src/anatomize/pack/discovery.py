@@ -12,6 +12,24 @@ from anatomize.pack.match import GlobMatcher
 
 @dataclass(frozen=True)
 class DiscoveredPath:
+    """A discovered file or directory in the repository.
+
+    Attributes
+    ----------
+    absolute_path
+        Resolved absolute path to the entry.
+    relative_posix
+        Path relative to the root in POSIX format.
+    is_dir
+        True if this entry is a directory.
+    is_symlink
+        True if this entry is a symbolic link.
+    size_bytes
+        File size in bytes (0 for directories).
+    is_binary
+        True if the file appears to be binary.
+    """
+
     absolute_path: Path
     relative_posix: str
     is_dir: bool
@@ -22,6 +40,25 @@ class DiscoveredPath:
 
 @dataclass(frozen=True)
 class DiscoveryTraceItem:
+    """Trace record explaining a discovery decision.
+
+    Attributes
+    ----------
+    path
+        Relative path in POSIX format.
+    is_dir
+        True if the entry is a directory.
+    decision
+        Either 'included' or 'excluded'.
+    reason
+        Why excluded: 'ignore' (matched ignore pattern), 'include'
+        (not in include list), or None for included files.
+    matched_pattern
+        The pattern that matched (for ignore exclusions).
+    matched_source
+        Source file of the matched pattern (e.g., '.gitignore').
+    """
+
     path: str
     is_dir: bool
     decision: str  # "included" or "excluded"
@@ -39,6 +76,36 @@ def discover_paths(
     max_file_bytes: int,
     trace: list[DiscoveryTraceItem] | None = None,
 ) -> list[DiscoveredPath]:
+    """Discover all files and directories in a repository.
+
+    Performs deterministic, depth-first traversal with filtering based
+    on ignore patterns, include patterns, symlink policy, and size limits.
+
+    Parameters
+    ----------
+    root
+        Root directory to discover.
+    excluder
+        Excluder instance for ignore pattern matching.
+    include_patterns
+        Optional allowlist of glob patterns (files not matching are excluded).
+    symlinks
+        Policy for following symbolic links.
+    max_file_bytes
+        Maximum file size in bytes (0 for unlimited).
+    trace
+        Optional list to receive discovery decision traces.
+
+    Returns
+    -------
+    list[DiscoveredPath]
+        Sorted list of discovered paths (directories first, then files).
+
+    Raises
+    ------
+    ValueError
+        If root doesn't exist, isn't a directory, or a file exceeds max size.
+    """
     root = root.resolve()
     if not root.exists() or not root.is_dir():
         raise ValueError(f"Root must be an existing directory: {root}")

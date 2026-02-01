@@ -50,6 +50,18 @@ from anatomize.pack.uses import python_public_symbol_positions
 
 @dataclass(frozen=True)
 class PackArtifact:
+    """Output artifact from a pack operation.
+
+    Attributes
+    ----------
+    path
+        Path to the generated artifact file.
+    bytes
+        Size of the artifact in bytes.
+    tokens
+        Token count of the artifact content.
+    """
+
     path: Path
     bytes: int
     tokens: int
@@ -57,6 +69,18 @@ class PackArtifact:
 
 @dataclass(frozen=True)
 class PackResult:
+    """Result of a pack operation.
+
+    Attributes
+    ----------
+    artifacts
+        List of generated artifact files.
+    content_tokens
+        Total token count across all file contents.
+    content_token_counts
+        Per-file token counts keyed by relative path.
+    """
+
     artifacts: list[PackArtifact]
     content_tokens: int
     content_token_counts: TokenCounts
@@ -301,6 +325,96 @@ def pack(
     deps: bool,
     python_roots: list[Path],
 ) -> PackResult:
+    """Generate a deterministic pack of repository files.
+
+    Discovers files, applies filtering, and renders them in the specified
+    format. Supports dependency slicing, compression, and hybrid modes.
+
+    Parameters
+    ----------
+    root
+        Root directory to pack.
+    output
+        Output file path (None for default based on format).
+    fmt
+        Output format (markdown, plain, json, jsonl, xml).
+    mode
+        Pack mode (bundle or hybrid).
+    include
+        Glob patterns for files to include.
+    ignore
+        Glob patterns for files to exclude.
+    ignore_files
+        Paths to additional ignore files.
+    respect_standard_ignores
+        Load .gitignore and similar files.
+    symlinks
+        Policy for following symbolic links.
+    max_file_bytes
+        Maximum file size in bytes.
+    workers
+        Number of parallel workers (0 for auto).
+    token_encoding
+        Token encoding for counting.
+    compress
+        Compress Python files to stubs.
+    content_encoding
+        How to encode file content in output.
+    prefix_style
+        Style for output header.
+    selection_report_output
+        Path for selection trace report.
+    line_numbers
+        Add line numbers to content.
+    include_structure
+        Include directory structure section.
+    include_files
+        Include file contents section.
+    max_output
+        Maximum output size limit.
+    split_output
+        Split output at this size limit.
+    representation_content
+        Patterns for content representation (hybrid).
+    representation_summary
+        Patterns for summary representation (hybrid).
+    representation_meta
+        Patterns for meta-only representation (hybrid).
+    fit_to_max_output
+        Auto-downgrade representations to fit limit (hybrid).
+    summary_config
+        Configuration for summary generation.
+    target
+        Target file for dependency slicing.
+    target_module
+        Target module name for slicing.
+    reverse_deps
+        Include files that depend on target.
+    uses
+        Include files that use symbols from target.
+    uses_include_private
+        Include private symbol usage.
+    slice_backend
+        Backend for dependency resolution.
+    pyright_langserver_cmd
+        Command to launch Pyright language server.
+    entries
+        Entry point files for dependency closure.
+    deps
+        Compute transitive dependencies of entries.
+    python_roots
+        Python source roots for import resolution.
+
+    Returns
+    -------
+    PackResult
+        Result containing artifacts and token statistics.
+
+    Raises
+    ------
+    ValueError
+        For invalid parameter combinations or file errors.
+    """
     root = root.resolve()
 
     if mode is PackMode.HYBRID:
@@ -627,9 +741,7 @@ def pack(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     inferred_from_output = infer_pack_format_from_output_path(out_path)
     if inferred_from_output is not None and inferred_from_output is not fmt:
-        raise ValueError(
-            f"Output path extension implies format {inferred_from_output.value} but fmt is {fmt.value}"
-        )
+        raise ValueError(f"Output path extension implies format {inferred_from_output.value} but fmt is {fmt.value}")
 
     if fmt is PackFormat.JSONL:
         artifacts = _write_jsonl(
@@ -642,17 +754,17 @@ def pack(
             mode=mode,
             files=jsonl_files if mode is PackMode.HYBRID else None,
             size_by_rel=size_by_rel,
-            representation_rules={
-                "content": representation_content or [],
-                "summary": representation_summary or [],
-                "meta": representation_meta or [],
-            }
-            if mode is PackMode.HYBRID
-            else None,
-            summary_config=(
-                (summary_config or SummaryConfig()).model_dump(mode="json")
+            representation_rules=(
+                {
+                    "content": representation_content or [],
+                    "summary": representation_summary or [],
+                    "meta": representation_meta or [],
+                }
                 if mode is PackMode.HYBRID
                 else None
+            ),
+            summary_config=(
+                (summary_config or SummaryConfig()).model_dump(mode="json") if mode is PackMode.HYBRID else None
             ),
             fit_to_max_output=fit_to_max_output if mode is PackMode.HYBRID else False,
         )
@@ -890,9 +1002,7 @@ def _build_split_output(
                 prefix = prefix_first if not parts else prefix_later
                 tok = count_tokens(prefix + b.text + suffix, encoding_name=token_encoding)
                 if tok > limit:
-                    raise ValueError(
-                        "A single file block exceeds the split token limit; increase --split-output"
-                    )
+                    raise ValueError("A single file block exceeds the split token limit; increase --split-output")
             current.append(b)
             current_size = b_size
             continue
@@ -1337,11 +1447,7 @@ def _write_jsonl(
 
         max_kind = max_output.kind
         total_bytes, total_tokens = totals(staged)
-        over = (
-            (total_bytes - max_output.value)
-            if max_kind is LimitKind.BYTES
-            else (total_tokens - max_output.value)
-        )
+        over = (total_bytes - max_output.value) if max_kind is LimitKind.BYTES else (total_tokens - max_output.value)
 
         # Identify downgrade candidates and compute deterministic savings.
         candidates: list[tuple[int, str]] = []
@@ -1540,11 +1646,7 @@ def _jsonl_files_from_payload(
 ) -> list[JsonlFile]:
     out: list[JsonlFile] = []
     for pf in payload.files:
-        rep = (
-            FileRepresentation.CONTENT
-            if payload.include_files and not pf.is_binary
-            else FileRepresentation.META
-        )
+        rep = FileRepresentation.CONTENT if payload.include_files and not pf.is_binary else FileRepresentation.META
         content: str | None = pf.content if rep is FileRepresentation.CONTENT else None
         content_field_tokens: int | None = None
         if content is not None:

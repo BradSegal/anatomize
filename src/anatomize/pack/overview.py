@@ -21,6 +21,24 @@ def build_pack_overview(
     size_by_rel: dict[str, int],
     is_binary_by_rel: dict[str, bool],
 ) -> dict[str, Any]:
+    """Build a compact overview of selected pack files.
+
+    Parameters
+    ----------
+    root
+        Root directory being packed.
+    selected_rel_paths
+        List of selected relative paths.
+    size_by_rel
+        Map of relative path to file size in bytes.
+    is_binary_by_rel
+        Map of relative path to binary flag.
+
+    Returns
+    -------
+    dict[str, Any]
+        Overview with file counts and total bytes.
+    """
     files = sorted(set(selected_rel_paths))
     python_files = [p for p in files if p.endswith(".py")]
 

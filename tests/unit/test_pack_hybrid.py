@@ -74,7 +74,7 @@ def test_pack_hybrid_defaults_to_python_summaries(tmp_path: Path) -> None:
 
 def test_pack_hybrid_content_rule_includes_full_content(tmp_path: Path) -> None:
     (tmp_path / "a.py").write_text("def f() -> None:\n    pass\n", encoding="utf-8")
-    (tmp_path / "b.json").write_text("{\"a\": 1}\n", encoding="utf-8")
+    (tmp_path / "b.json").write_text('{"a": 1}\n', encoding="utf-8")
     out = tmp_path / "out.jsonl"
 
     pack(

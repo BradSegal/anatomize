@@ -93,11 +93,7 @@ def test_config_pack_section_parses_and_is_strict(tmp_path: Path) -> None:
 def test_config_pack_output_extension_must_match_format(tmp_path: Path) -> None:
     cfg = tmp_path / ".anatomize.yaml"
     cfg.write_text(
-        (
-            "pack:\n"
-            "  format: markdown\n"
-            "  output: out.jsonl\n"
-        ),
+        ("pack:\n" "  format: markdown\n" "  output: out.jsonl\n"),
         encoding="utf-8",
     )
     with pytest.raises(ValidationError):
@@ -107,13 +103,7 @@ def test_config_pack_output_extension_must_match_format(tmp_path: Path) -> None:
 def test_config_rejects_unsafe_source_output(tmp_path: Path) -> None:
     cfg = tmp_path / ".anatomize.yaml"
     cfg.write_text(
-        (
-            "output: .anatomy\n"
-            "sources:\n"
-            "  - path: src\n"
-            "    output: ../escape\n"
-            "    level: modules\n"
-        ),
+        ("output: .anatomy\n" "sources:\n" "  - path: src\n" "    output: ../escape\n" "    level: modules\n"),
         encoding="utf-8",
     )
     with pytest.raises(ValidationError):

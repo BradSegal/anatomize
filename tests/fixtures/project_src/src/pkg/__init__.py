@@ -1,2 +1,1 @@
 """Regular package fixture."""
-

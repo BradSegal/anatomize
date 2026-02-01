@@ -12,6 +12,22 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 
 
 class PackFormat(str, Enum):
+    """Output format for pack artifacts.
+
+    Attributes
+    ----------
+    MARKDOWN
+        Human-readable Markdown with fenced code blocks.
+    PLAIN
+        Plain text with separator lines.
+    JSON
+        Single JSON object with all files.
+    XML
+        XML document format.
+    JSONL
+        JSON Lines with one record per file (streamable).
+    """
+
     MARKDOWN = "markdown"
     PLAIN = "plain"
     JSON = "json"
@@ -20,17 +36,54 @@ class PackFormat(str, Enum):
 
 
 class ContentEncoding(str, Enum):
+    """Encoding strategy for file content in pack output.
+
+    Attributes
+    ----------
+    VERBATIM
+        Content as-is (not safe for Markdown fences).
+    FENCE_SAFE
+        Escaped to avoid breaking Markdown code fences.
+    BASE64
+        Base64-encoded UTF-8 for binary-safe transport.
+    """
+
     VERBATIM = "verbatim"
     FENCE_SAFE = "fence-safe"
     BASE64 = "base64"
 
+
 class PrefixStyle(str, Enum):
+    """Style for the pack output prefix/header.
+
+    Attributes
+    ----------
+    STANDARD
+        Full header with usage instructions and notes.
+    MINIMAL
+        Compact header with only essential metadata.
+    """
+
     STANDARD = "standard"
     MINIMAL = "minimal"
 
 
 @dataclass(frozen=True)
 class PackFile:
+    """A file entry in a pack payload.
+
+    Attributes
+    ----------
+    path
+        Relative path in POSIX format.
+    language
+        Detected programming language (for syntax highlighting).
+    is_binary
+        True if the file is binary (content will be None).
+    content
+        File content as string, or None for binary files.
+    """
+
     path: str
     language: str | None
     is_binary: bool
@@ -39,6 +92,34 @@ class PackFile:
 
 @dataclass(frozen=True)
 class PackPayload:
+    """Complete payload for pack output rendering.
+
+    Attributes
+    ----------
+    root_name
+        Name of the root directory being packed.
+    structure_paths
+        Tree-formatted list of paths for structure section.
+    overview
+        Optional overview statistics and metadata.
+    files
+        List of files to include in the pack.
+    encoding_name
+        Token encoding name used for counting.
+    compressed
+        True if Python files are compressed to stubs.
+    content_encoding
+        How file content is encoded in output.
+    line_numbers
+        True if line numbers are added to content.
+    include_structure
+        True if structure section should be rendered.
+    include_files
+        True if file contents should be rendered.
+    prefix_style
+        Style for the output header.
+    """
+
     root_name: str
     structure_paths: list[str]
     overview: dict[str, Any] | None
@@ -53,6 +134,18 @@ class PackPayload:
 
 
 def default_output_path(fmt: PackFormat) -> Path:
+    """Return the default output filename for a pack format.
+
+    Parameters
+    ----------
+    fmt
+        The pack output format.
+
+    Returns
+    -------
+    Path
+        Default filename (e.g., 'anatomize-pack.md' for MARKDOWN).
+    """
     if fmt is PackFormat.MARKDOWN:
         return Path("anatomize-pack.md")
     if fmt is PackFormat.PLAIN:
@@ -84,6 +177,25 @@ def infer_pack_format_from_output_path(path: Path) -> PackFormat | None:
 
 
 def render(payload: PackPayload, *, fmt: PackFormat) -> str:
+    """Render a pack payload to a string in the specified format.
+
+    Parameters
+    ----------
+    payload
+        The pack payload to render.
+    fmt
+        Output format.
+
+    Returns
+    -------
+    str
+        Rendered pack output.
+
+    Raises
+    ------
+    ValueError
+        If format is JSONL (requires streaming) or unsupported.
+    """
     if fmt is PackFormat.MARKDOWN:
         return _render_markdown(payload)
     if fmt is PackFormat.PLAIN:
@@ -133,9 +245,11 @@ def _render_json(payload: PackPayload) -> str:
                 "language": f.language,
                 "is_binary": f.is_binary,
                 "content_encoding": payload.content_encoding.value if payload.include_files else None,
-                "content": _encoded_content(f.content or "", payload.content_encoding)
-                if payload.include_files and not f.is_binary
-                else None,
+                "content": (
+                    _encoded_content(f.content or "", payload.content_encoding)
+                    if payload.include_files and not f.is_binary
+                    else None
+                ),
             }
             for f in payload.files
         ],
@@ -275,6 +389,27 @@ def render_prefix(
 
 
 def render_file_block(payload: PackPayload, *, fmt: PackFormat, file: PackFile) -> str:
+    """Render a single file block for markdown/plain formats.
+
+    Parameters
+    ----------
+    payload
+        Pack payload for encoding settings.
+    fmt
+        Output format (MARKDOWN or PLAIN only).
+    file
+        The file to render.
+
+    Returns
+    -------
+    str
+        Rendered file block with header and content.
+
+    Raises
+    ------
+    ValueError
+        If include_files is False or format doesn't support file blocks.
+    """
     if not payload.include_files:
         raise ValueError("Internal error: file blocks require include_files=True")
 
@@ -325,6 +460,25 @@ def render_file_block(payload: PackPayload, *, fmt: PackFormat, file: PackFile) 
 
 
 def render_suffix(payload: PackPayload, *, fmt: PackFormat) -> str:
+    """Render the closing suffix for markdown/plain formats.
+
+    Parameters
+    ----------
+    payload
+        Pack payload (currently unused).
+    fmt
+        Output format (MARKDOWN or PLAIN only).
+
+    Returns
+    -------
+    str
+        Closing suffix (typically a newline).
+
+    Raises
+    ------
+    ValueError
+        If format doesn't support suffix rendering.
+    """
     _ = payload
     if fmt in (PackFormat.MARKDOWN, PackFormat.PLAIN):
         return "\n"

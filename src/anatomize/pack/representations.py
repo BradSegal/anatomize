@@ -12,6 +12,18 @@ from anatomize.core.exclude import parse_ignore_line
 
 
 class FileRepresentation(str, Enum):
+    """How a file is represented in hybrid pack output.
+
+    Attributes
+    ----------
+    META
+        Only metadata (path, size, language).
+    SUMMARY
+        Structural summary (e.g., JSON paths, headings).
+    CONTENT
+        Full file content.
+    """
+
     META = "meta"
     SUMMARY = "summary"
     CONTENT = "content"
@@ -19,6 +31,22 @@ class FileRepresentation(str, Enum):
 
 @dataclass(frozen=True)
 class RepresentationRule:
+    """Compiled pattern rule for representation matching.
+
+    Attributes
+    ----------
+    pattern
+        Glob pattern without anchoring characters.
+    representation
+        Representation to apply when matched.
+    anchored
+        True if pattern was '/'-prefixed.
+    directory_only
+        True if pattern was '/'-suffixed.
+    has_slash
+        True if pattern contains a path separator.
+    """
+
     pattern: str
     representation: FileRepresentation
     anchored: bool
@@ -27,6 +55,20 @@ class RepresentationRule:
 
 
 def compile_representation_rules(patterns: list[str], representation: FileRepresentation) -> list[RepresentationRule]:
+    """Compile glob patterns into representation rules.
+
+    Parameters
+    ----------
+    patterns
+        List of gitignore-style glob patterns.
+    representation
+        Representation to assign to matching files.
+
+    Returns
+    -------
+    list[RepresentationRule]
+        Compiled rules for pattern matching.
+    """
     rules: list[RepresentationRule] = []
     for raw in patterns:
         parsed = parse_ignore_line(raw, allow_negation=False)
@@ -61,9 +103,33 @@ def compile_representation_rules(patterns: list[str], representation: FileRepres
 
 @dataclass(frozen=True)
 class RepresentationPolicy:
+    """Policy for resolving file representations from rules.
+
+    Attributes
+    ----------
+    rules
+        List of representation rules (applied in order).
+    """
+
     rules: list[RepresentationRule]
 
     def resolve(self, rel_posix: str, *, is_dir: bool, default: FileRepresentation) -> FileRepresentation:
+        """Resolve the representation for a path.
+
+        Parameters
+        ----------
+        rel_posix
+            Relative path in POSIX format.
+        is_dir
+            True if the path is a directory.
+        default
+            Default representation if no rule matches.
+
+        Returns
+        -------
+        FileRepresentation
+            Resolved representation (last matching rule wins).
+        """
         rel_posix = rel_posix.strip("/")
         path = PurePosixPath(rel_posix) if rel_posix else PurePosixPath(".")
         rep = default
@@ -110,9 +176,7 @@ def _match_parts(pat_parts: tuple[str, ...], path_parts: tuple[str, ...]) -> boo
 
 
 @cache
-def _match_parts_at(
-    pat_parts: tuple[str, ...], pi: int, path_parts: tuple[str, ...], si: int
-) -> bool:
+def _match_parts_at(pat_parts: tuple[str, ...], pi: int, path_parts: tuple[str, ...], si: int) -> bool:
     if pi == len(pat_parts):
         return si == len(path_parts)
 

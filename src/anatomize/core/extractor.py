@@ -210,10 +210,7 @@ class SymbolExtractor:
 
         # Check for special class types
         is_dataclass = "dataclass" in decorators or "dataclasses.dataclass" in decorators
-        is_pydantic = any(
-            base in ("BaseModel", "BaseSettings", "pydantic.BaseModel")
-            for base in bases
-        )
+        is_pydantic = any(base in ("BaseModel", "BaseSettings", "pydantic.BaseModel") for base in bases)
 
         # Extract methods
         methods: list[FunctionInfo] = []
@@ -439,9 +436,7 @@ class SymbolExtractor:
             parameters=parameters,
         )
 
-    def _build_parameter_infos(
-        self, params: list[tuple[str, str | None, str | None, str]]
-    ) -> list[ParameterInfo]:
+    def _build_parameter_infos(self, params: list[tuple[str, str | None, str | None, str]]) -> list[ParameterInfo]:
         """Build ParameterInfo list from parsed parameter parts."""
         # Determine positional-only parameters (everything before '/')
         positional_separator_index = next(

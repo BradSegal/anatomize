@@ -130,10 +130,10 @@ class YamlFormatter:
         data = skeleton.to_dict()
         return str(
             yaml.dump(
-            data,
-            Dumper=self._dumper,
-            default_flow_style=False,
-            allow_unicode=True,
-            sort_keys=False,
+                data,
+                Dumper=self._dumper,
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
             )
         )

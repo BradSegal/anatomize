@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 
 def test_pack_markdown_parsable_uses_safe_fences(tmp_path: Path) -> None:
     # Content includes a triple-backtick fence, which would break naive markdown bundling.
-    (tmp_path / "a.py").write_text("def f():\n    s = \"```\"\n    return s\n", encoding="utf-8")
+    (tmp_path / "a.py").write_text('def f():\n    s = "```"\n    return s\n', encoding="utf-8")
 
     out = tmp_path / "out.md"
     pack(
@@ -296,8 +296,8 @@ def test_pack_jsonl_output_is_written(tmp_path: Path) -> None:
 
     assert res.artifacts and res.artifacts[0].path == out
     text = out.read_text(encoding="utf-8").splitlines()
-    assert text[0].startswith("{") and "\"type\":\"meta\"" in text[0]
-    assert any("\"type\":\"file\"" in line for line in text)
+    assert text[0].startswith("{") and '"type":"meta"' in text[0]
+    assert any('"type":"file"' in line for line in text)
 
 
 def test_pack_base64_content_encoding_roundtrips_in_json(tmp_path: Path) -> None:

@@ -12,11 +12,40 @@ from anatomize.pack.pyright_lsp import LspPosition
 
 @dataclass(frozen=True)
 class UsageSlice:
+    """Target file with symbol positions for usage slicing.
+
+    Attributes
+    ----------
+    target_file
+        Path to the file containing symbols to find usages of.
+    symbol_positions
+        List of positions where symbols are defined.
+    """
+
     target_file: Path
     symbol_positions: list[LspPosition]
 
 
 def python_public_symbol_positions(path: Path, *, include_private: bool) -> list[LspPosition]:
+    """Extract positions of public symbols from a Python file.
+
+    Parameters
+    ----------
+    path
+        Path to the Python file.
+    include_private
+        If True, include symbols starting with '_'.
+
+    Returns
+    -------
+    list[LspPosition]
+        Zero-based positions of symbol definitions.
+
+    Raises
+    ------
+    ValueError
+        If file cannot be read or has syntax errors.
+    """
     try:
         source = path.read_text(encoding="utf-8")
     except OSError as e:

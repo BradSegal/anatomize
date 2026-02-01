@@ -171,9 +171,7 @@ class SkeletonGenerator:
         total_modules = sum(len(p.modules) for p in packages.values())
         total_classes = sum(len(m.classes) for m in modules.values())
         total_functions = sum(len(m.functions) for m in modules.values())
-        total_functions += sum(
-            len(c.methods) for m in modules.values() for c in m.classes
-        )
+        total_functions += sum(len(c.methods) for m in modules.values() for c in m.classes)
 
         token_estimate = 0
 

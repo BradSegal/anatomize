@@ -1,11 +1,11 @@
-"""Exclude matching with gitignore-like semantics.
+r"""Exclude matching with gitignore-like semantics.
 
 Patterns are applied in order; the last matching rule wins.
 
 Supported:
 - `#` comments and blank lines
 - `!` negation rules
-- `\\#` and `\\!` as literal `#` / `!` at line start
+- `\#` and `\!` as literal `#` / `!` at line start
 - trailing spaces ignored unless escaped (gitignore-like)
 - `/`-anchored rules
 - rules with `/` match against paths
@@ -26,12 +26,40 @@ from typing import TypeAlias
 
 @dataclass(frozen=True)
 class ParsedIgnoreLine:
+    """Result of parsing a single ignore pattern line.
+
+    Attributes
+    ----------
+    pattern
+        The pattern without negation prefix.
+    negated
+        True if the pattern was prefixed with '!'.
+    """
+
     pattern: str
     negated: bool
 
 
 @dataclass(frozen=True)
 class ExcludeRule:
+    """Compiled exclusion rule for path matching.
+
+    Attributes
+    ----------
+    pattern
+        The glob pattern without anchoring characters.
+    negated
+        True if this rule re-includes previously excluded paths.
+    anchored
+        True if pattern was '/'-prefixed (match from root).
+    directory_only
+        True if pattern was '/'-suffixed (match directories only).
+    has_slash
+        True if pattern contains a path separator.
+    source
+        Where this rule came from (e.g., '.gitignore', 'cli').
+    """
+
     pattern: str
     negated: bool
     anchored: bool
@@ -44,7 +72,21 @@ IgnorePattern: TypeAlias = str | tuple[str, str]
 
 
 class Excluder:
+    """Gitignore-style path exclusion matcher.
+
+    Applies patterns in order; the last matching rule wins. Supports
+    negation patterns, glob wildcards, anchored patterns, and
+    directory-only patterns.
+    """
+
     def __init__(self, patterns: Sequence[IgnorePattern]) -> None:
+        """Initialize with a sequence of ignore patterns.
+
+        Parameters
+        ----------
+        patterns
+            Patterns as strings or (pattern, source) tuples.
+        """
         self._rules: list[ExcludeRule] = []
         for item in patterns:
             source = "unspecified"
@@ -89,6 +131,7 @@ class Excluder:
         return self.explain(rel_posix, is_dir=is_dir)[0]
 
     def rules(self) -> list[ExcludeRule]:
+        """Return a copy of the compiled rules list."""
         return list(self._rules)
 
     def explain(self, rel_posix: str, *, is_dir: bool) -> tuple[bool, ExcludeRule | None]:
@@ -156,9 +199,7 @@ def _match_parts(pat_parts: tuple[str, ...], path_parts: tuple[str, ...]) -> boo
 
 
 @cache
-def _match_parts_at(
-    pat_parts: tuple[str, ...], pi: int, path_parts: tuple[str, ...], si: int
-) -> bool:
+def _match_parts_at(pat_parts: tuple[str, ...], pi: int, path_parts: tuple[str, ...], si: int) -> bool:
     if pi == len(pat_parts):
         return si == len(path_parts)
 
@@ -180,12 +221,12 @@ def _match_parts_at(
 
 
 def parse_ignore_line(raw: str, *, allow_negation: bool) -> ParsedIgnoreLine | None:
-    """Parse a gitignore-like line with strict, minimal escaping support.
+    r"""Parse a gitignore-like line with strict, minimal escaping support.
 
     Supported:
     - Blank lines are ignored
     - `#` comments when `#` is the first character
-    - `\\#` and `\\!` to treat leading `#` / `!` as literals
+    - `\#` and `\!` to treat leading `#` / `!` as literals
     - `!` negation when `allow_negation=True` and `!` is the first character
     - trailing spaces are ignored unless escaped with a backslash (`\\ `)
 

@@ -15,6 +15,32 @@ from anatomize.pack.representations import FileRepresentation
 
 @dataclass(frozen=True)
 class JsonlFile:
+    """File entry for JSONL streaming output.
+
+    Attributes
+    ----------
+    path
+        Relative path in POSIX format.
+    language
+        Detected programming language.
+    is_binary
+        True if file is binary.
+    size_bytes
+        Original file size.
+    content_tokens
+        Token count of the content.
+    representation
+        How the file is represented (content/summary/meta).
+    summary
+        Summary data if representation is summary.
+    content_encoding
+        Encoding used for content if included.
+    content
+        File content if representation is content.
+    content_field_tokens
+        Token count of the encoded content field.
+    """
+
     path: str
     language: str | None
     is_binary: bool
@@ -40,6 +66,36 @@ def iter_jsonl_prefix(
     summary_config: dict[str, Any] | None,
     selection_trace: list[dict[str, Any]] | None,
 ) -> Iterable[str]:
+    """Yield JSONL prefix records (meta, optional structure).
+
+    Parameters
+    ----------
+    payload
+        Pack payload with metadata.
+    include_structure
+        Whether to include the structure record.
+    include_overview
+        Whether to include overview in meta.
+    mode
+        Pack mode (bundle/hybrid).
+    max_output
+        Max output limit string (for recording in meta).
+    split_output
+        Split output limit string (for recording in meta).
+    fit_to_max_output
+        Whether fit-to-max is enabled.
+    representation_rules
+        Representation rules dict (for recording in meta).
+    summary_config
+        Summary config dict (for recording in meta).
+    selection_trace
+        Discovery trace items (for recording in meta).
+
+    Yields
+    ------
+    str
+        JSON lines for meta and optional structure records.
+    """
     structure_included = bool(include_structure and payload.include_structure)
     meta: dict[str, Any] = {
         "type": "meta",
@@ -69,6 +125,20 @@ def iter_jsonl_prefix(
 
 
 def iter_jsonl_file_records(payload: PackPayload, *, files: list[JsonlFile]) -> Iterable[str]:
+    """Yield JSONL file records.
+
+    Parameters
+    ----------
+    payload
+        Pack payload for encoding settings.
+    files
+        List of files to emit.
+
+    Yields
+    ------
+    str
+        JSON line for each file record.
+    """
     for f in files:
         yield _dump(_file_record(payload, f))
 

@@ -38,6 +38,7 @@ app = typer.Typer(
 
 logger = logging.getLogger(__name__)
 
+
 class _Preset(str, Enum):
     STANDARD = "standard"
 
@@ -883,9 +884,7 @@ def pack(
             raise ValueError("--mode hybrid supports only markdown, plain, or jsonl output")
         resolved_include = pack_cfg.include if include is None else include
         resolved_ignore = pack_cfg.ignore if ignore is None else ignore
-        resolved_ignore_files = (
-            [Path(p) for p in pack_cfg.ignore_files] if ignore_file is None else ignore_file
-        )
+        resolved_ignore_files = [Path(p) for p in pack_cfg.ignore_files] if ignore_file is None else ignore_file
         resolved_ignore_files = [((root / p).resolve() if not p.is_absolute() else p) for p in resolved_ignore_files]
 
         resolved_respect_ignores = (
@@ -926,9 +925,7 @@ def pack(
         resolved_pyright_cmd = (
             pack_cfg.pyright_langserver_cmd if pyright_langserver_cmd is None else pyright_langserver_cmd
         )
-        resolved_python_roots = (
-            [Path(p) for p in pack_cfg.python_roots] if python_root is None else python_root
-        )
+        resolved_python_roots = [Path(p) for p in pack_cfg.python_roots] if python_root is None else python_root
 
         selection_report_path: Path | None = None
         if explain_selection:

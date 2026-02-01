@@ -12,6 +12,21 @@ from anatomize.core.types import ResolutionLevel, Skeleton
 
 
 def build_hierarchy_document(skeleton: Skeleton) -> dict[str, Any]:
+    """Build the hierarchy document payload for serialization.
+
+    Creates a dictionary containing metadata and package tree structure
+    suitable for JSON/YAML output.
+
+    Parameters
+    ----------
+    skeleton
+        The skeleton to convert.
+
+    Returns
+    -------
+    dict[str, Any]
+        Hierarchy document with metadata and packages sections.
+    """
     data: dict[str, Any] = {
         "metadata": {
             "generator_version": skeleton.metadata.generator_version,

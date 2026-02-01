@@ -25,4 +25,3 @@ def test_cli_init_writes_config_and_is_idempotent(monkeypatch: pytest.MonkeyPatc
 
     again = runner.invoke(app, ["init", "--preset", "standard"])
     assert again.exit_code != 0
-

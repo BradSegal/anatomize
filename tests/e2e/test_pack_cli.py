@@ -24,10 +24,7 @@ def test_cli_pack_and_compress_reduces_tokens(monkeypatch: pytest.MonkeyPatch, t
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("", encoding="utf-8")
     (pkg / "a.py").write_text(
-        "import typing\n\n"
-        "def f(x: int, y: int) -> int:\n"
-        "    \"\"\"Add two numbers.\"\"\"\n"
-        "    return x + y\n",
+        "import typing\n\n" "def f(x: int, y: int) -> int:\n" '    """Add two numbers."""\n' "    return x + y\n",
         encoding="utf-8",
     )
 

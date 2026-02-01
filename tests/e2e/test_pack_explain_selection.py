@@ -110,4 +110,3 @@ def test_cli_pack_explain_selection_reports_slice_exclusions(monkeypatch: pytest
     assert by_path["a.py"]["decision"] == "included"
     assert by_path["b.py"]["decision"] == "excluded"
     assert by_path["b.py"]["reason"] == "slice"
-

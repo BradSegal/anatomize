@@ -17,13 +17,44 @@ from anatomize.core.policy import SymlinkPolicy
 
 @dataclass(frozen=True)
 class PythonModule:
+    """A discovered Python module.
+
+    Attributes
+    ----------
+    module
+        Fully qualified module name (e.g., 'pkg.sub.mod').
+    path
+        Absolute path to the module file.
+    is_package
+        True if this is a package __init__.py.
+    """
+
     module: str
     path: Path
     is_package: bool
 
 
 class PythonModuleIndex:
+    """Index of Python modules under configured roots.
+
+    Provides module name resolution and dependency analysis.
+    """
+
     def __init__(self, python_roots: list[Path], *, symlinks: SymlinkPolicy = SymlinkPolicy.FORBID) -> None:
+        """Build index from Python root directories.
+
+        Parameters
+        ----------
+        python_roots
+            Directories to scan for Python modules.
+        symlinks
+            Policy for following symbolic links.
+
+        Raises
+        ------
+        ValueError
+            If a root directory doesn't exist.
+        """
         self._python_roots = [p.resolve() for p in python_roots]
         self._by_module: dict[str, PythonModule] = {}
         for root in self._python_roots:
@@ -45,6 +76,23 @@ class PythonModuleIndex:
         self._local_toplevels = {m.split(".", 1)[0] for m in self._by_module.keys() if m}
 
     def module_for_path(self, path: Path) -> PythonModule:
+        """Get the module for a given file path.
+
+        Parameters
+        ----------
+        path
+            Path to a Python file.
+
+        Returns
+        -------
+        PythonModule
+            Module info for the path.
+
+        Raises
+        ------
+        ValueError
+            If path is not under any configured python root.
+        """
         abs_path = path.resolve()
         for root in self._python_roots:
             try:
@@ -66,15 +114,19 @@ class PythonModuleIndex:
         raise ValueError(f"Path is not under any configured python root: {path}")
 
     def resolve_module(self, module: str) -> PythonModule | None:
+        """Resolve a module name to its module info."""
         return self._by_module.get(module)
 
     def modules(self) -> list[PythonModule]:
+        """Return all indexed modules sorted by name."""
         return [self._by_module[k] for k in sorted(self._by_module.keys())]
 
     def is_local_toplevel(self, name: str) -> bool:
+        """Check if a name is a local top-level package."""
         return name in self._local_toplevels
 
     def package_inits_for(self, module: str) -> list[PythonModule]:
+        """Get package __init__ modules for a given module path."""
         parts = module.split(".")
         inits: list[PythonModule] = []
         for i in range(1, len(parts)):
@@ -86,6 +138,25 @@ class PythonModuleIndex:
 
 
 def dependency_closure(entry_files: list[Path], *, index: PythonModuleIndex) -> list[Path]:
+    """Compute transitive dependency closure from entry files.
+
+    Parameters
+    ----------
+    entry_files
+        Entry point Python files.
+    index
+        Module index for resolution.
+
+    Returns
+    -------
+    list[Path]
+        All files in the dependency closure (sorted).
+
+    Raises
+    ------
+    ValueError
+        If entry_files is empty or imports cannot be resolved.
+    """
     if not entry_files:
         raise ValueError("At least one --entry is required for dependency closure")
 
