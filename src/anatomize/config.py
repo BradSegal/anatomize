@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from anatomize.core.policy import SymlinkPolicy
 from anatomize.core.types import ResolutionLevel
 from anatomize.formats import OutputFormat
-from anatomize.pack.formats import ContentEncoding, PackFormat, infer_pack_format_from_output_path
+from anatomize.pack.formats import ContentEncoding, PackFormat, PrefixStyle, infer_pack_format_from_output_path
 from anatomize.pack.mode import PackMode
 from anatomize.pack.slicing import SliceBackend
 from anatomize.pack.summaries import SummaryConfig
@@ -26,6 +26,7 @@ class PackConfig(BaseModel):
     format: PackFormat = PackFormat.MARKDOWN
     mode: PackMode = PackMode.BUNDLE
     output: str | None = None
+    prefix: PrefixStyle = PrefixStyle.STANDARD
     include: list[str] = Field(default_factory=list)
     ignore: list[str] = Field(default_factory=list)
     ignore_files: list[str] = Field(default_factory=list)
@@ -54,6 +55,13 @@ class PackConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     def model_post_init(self, __context: Any) -> None:
+        if self.mode is PackMode.HYBRID and self.format not in (
+            PackFormat.MARKDOWN,
+            PackFormat.PLAIN,
+            PackFormat.JSONL,
+        ):
+            raise ValueError("pack.mode=hybrid supports only markdown, plain, or jsonl format")
+
         if self.output is None:
             return
         inferred = infer_pack_format_from_output_path(Path(self.output))
@@ -180,6 +188,7 @@ class AnatomizeConfig(BaseModel):
                 "format": self.pack.format.value,
                 "mode": self.pack.mode.value,
                 "output": self.pack.output,
+                "prefix": self.pack.prefix.value,
                 "include": self.pack.include,
                 "ignore": self.pack.ignore,
                 "ignore_files": self.pack.ignore_files,

@@ -26,7 +26,7 @@ class JsonFormatter:
     Example
     -------
     >>> formatter = JsonFormatter()
-    >>> formatter.write(skeleton, Path(".skeleton"))
+    >>> formatter.write(skeleton, Path(".anatomy"))
     """
 
     def __init__(self, indent: int = 2) -> None:

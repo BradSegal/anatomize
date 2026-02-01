@@ -27,7 +27,7 @@ class YamlFormatter:
     Example
     -------
     >>> formatter = YamlFormatter()
-    >>> formatter.write(skeleton, Path(".skeleton"))
+    >>> formatter.write(skeleton, Path(".anatomy"))
     """
 
     def __init__(self) -> None:

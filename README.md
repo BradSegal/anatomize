@@ -75,6 +75,13 @@ anatomize pack . --output codebase.md
 # Full bundle
 anatomize pack . --format markdown --output codebase.md
 
+# Minimal prefix (lower token overhead)
+anatomize pack . --prefix minimal --output codebase.md
+
+# Explain selection (why files were included/excluded)
+# (writes `codebase.md.selection.json` by default)
+anatomize pack . --explain-selection --output codebase.md
+
 # Filter by globs
 anatomize pack . --include "src/**" --ignore "**/__pycache__/**" --output src-only.md
 
@@ -108,13 +115,13 @@ anatomize pack . --token-count-tree --output codebase.md
 # JSONL (stream-friendly)
 anatomize pack . --format jsonl --output codebase.jsonl
 
-# Hybrid mode (skeleton-style summaries + selective fill)
-# - defaults to JSONL when --mode hybrid is set
+# Hybrid mode (summaries + selective fill; token-efficient)
+# - defaults to markdown when --format and the output extension are not specified
 # - Python files default to summary; non-Python defaults to metadata-only
-anatomize pack . --mode hybrid --output hybrid.jsonl
+anatomize pack . --mode hybrid --output hybrid.md
 
-# Hybrid: include full content for a slice and fit within a hard token budget
-anatomize pack . --mode hybrid --max-output 50_000t --fit-to-max-output \
+# Hybrid: include full content for a slice and fit within a hard token budget (JSONL only)
+anatomize pack . --mode hybrid --format jsonl --max-output 50_000t --fit-to-max-output \
   --content "src/pkg/**" --output hybrid.slice.jsonl
 ```
 
@@ -180,8 +187,9 @@ symlinks: forbid # forbid|files|dirs|all
 workers: 0 # 0 = auto
 
 pack:
-  format: markdown # markdown|plain|json|xml|jsonl
-  mode: bundle # bundle|hybrid
+  format: markdown # markdown|plain|json|xml|jsonl (hybrid supports markdown|plain|jsonl)
+  mode: bundle # bundle|hybrid (hybrid is token-efficient summaries + selective fill)
+  prefix: standard # standard|minimal
   output: anatomize-pack.md # if the extension is known, it must match `format`
   include: []
   ignore: []

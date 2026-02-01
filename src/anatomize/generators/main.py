@@ -69,9 +69,14 @@ class SkeletonGenerator:
             "*.pyc",
             ".git",
             ".venv",
-            ".skeleton",
+            ".anatomy",
+            ".runtime",
             ".mypy_cache",
             ".pytest_cache",
+            ".ruff_cache",
+            "dist",
+            "build",
+            "*.egg-info",
         ]
         self._symlinks = symlinks
         self._workers = workers

@@ -163,7 +163,7 @@ Hybrid mode is intended for token efficiency and navigability:
 - Python files default to `summary` (signatures/imports/line numbers).
 - Non-Python files default to `meta` (metadata only) unless explicitly summarized or included as content.
 - If `--format` is omitted, it is inferred from `--output` when the extension is known (`.md|.txt|.json|.xml|.jsonl`).
-- Hybrid output is **JSONL**. If `--format` is not provided, it defaults to JSONL when `--mode hybrid` is used. Non-`.jsonl` output paths are rejected.
+- Hybrid supports **markdown**, **plain**, and **jsonl** output. If `--format` is not provided, it defaults to markdown when `--mode hybrid` is used and the output extension is unknown.
 
 ### Output formats
 - `--format markdown` (best for human review)
@@ -171,12 +171,22 @@ Hybrid mode is intended for token efficiency and navigability:
 - `--format json` / `--format xml` (best for machine processing)
 - `--format jsonl` (stream-friendly, line-delimited JSON)
 
+### Prefix style (token overhead vs guidance)
+Control the amount of non-code guidance emitted at the top of markdown/plain pack artifacts:
+- `--prefix standard` (default): includes a short “How to use” section.
+- `--prefix minimal`: omits guidance and keeps only a compact, deterministic summary.
+
 ### Content encoding (robustness)
 File contents can break Markdown structure (e.g. embedded ``` fences). Control how content is emitted with:
 - `--content-encoding fence-safe` (default): picks a fence length that cannot occur in the content.
 - `--content-encoding base64`: emits base64-encoded UTF-8 content (max robustness, less readable).
 
 Note: Markdown output intentionally disallows `--content-encoding verbatim`.
+
+### Selection report (debugging file inclusion)
+If you need to understand why paths were included or excluded, use:
+- `--explain-selection` to write a deterministic selection report.
+- `--explain-selection-output PATH` to choose where it is written.
 
 ### Hybrid representations (fill-in controls)
 In hybrid mode, each file record has an explicit representation:
@@ -197,7 +207,7 @@ Supported non-Python summaries:
 - Markdown: headings outline
 
 ### Fit-to-budget (explicit)
-Hybrid mode can deterministically fit within a hard cap:
+Hybrid mode can deterministically fit within a hard cap (JSONL only):
 - `--max-output 50_000t --fit-to-max-output`
 
 If enabled, `pack` may downgrade representations (e.g. `summary` → `meta`) to satisfy `--max-output` and emits an auditable `selection_trace`.

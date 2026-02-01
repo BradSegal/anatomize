@@ -20,6 +20,16 @@ class DiscoveredPath:
     is_binary: bool
 
 
+@dataclass(frozen=True)
+class DiscoveryTraceItem:
+    path: str
+    is_dir: bool
+    decision: str  # "included" or "excluded"
+    reason: str | None  # "ignore" | "include" | None
+    matched_pattern: str | None
+    matched_source: str | None
+
+
 def discover_paths(
     root: Path,
     *,
@@ -27,6 +37,7 @@ def discover_paths(
     include_patterns: list[str] | None,
     symlinks: SymlinkPolicy,
     max_file_bytes: int,
+    trace: list[DiscoveryTraceItem] | None = None,
 ) -> list[DiscoveredPath]:
     root = root.resolve()
     if not root.exists() or not root.is_dir():
@@ -55,7 +66,22 @@ def discover_paths(
             except OSError as e:
                 raise ValueError(f"Failed to stat path: {entry}") from e
 
-            if excluder.is_excluded(rel_posix, is_dir=is_dir):
+            excluded, matched = excluder.explain(rel_posix, is_dir=is_dir)
+            if excluded:
+                if trace is not None:
+                    matched_pattern = None
+                    if matched is not None:
+                        matched_pattern = matched.pattern + ("/" if matched.directory_only else "")
+                    trace.append(
+                        DiscoveryTraceItem(
+                            path=rel_posix,
+                            is_dir=is_dir,
+                            decision="excluded",
+                            reason="ignore",
+                            matched_pattern=matched_pattern,
+                            matched_source=matched.source if matched is not None else None,
+                        )
+                    )
                 continue
 
             if include_patterns and not include_matcher.matches_any(rel_posix, is_dir=is_dir):
@@ -64,6 +90,17 @@ def discover_paths(
                 # our simple include matcher cannot prove that cheaply, so we traverse all
                 # non-excluded directories and filter files at the leaf.
                 if not is_dir:
+                    if trace is not None:
+                        trace.append(
+                            DiscoveryTraceItem(
+                                path=rel_posix,
+                                is_dir=False,
+                                decision="excluded",
+                                reason="include",
+                                matched_pattern=None,
+                                matched_source=None,
+                            )
+                        )
                     continue
 
             if is_dir:
@@ -95,6 +132,17 @@ def discover_paths(
                     is_binary=is_binary,
                 )
             )
+            if trace is not None:
+                trace.append(
+                    DiscoveryTraceItem(
+                        path=rel_posix,
+                        is_dir=False,
+                        decision="included",
+                        reason=None,
+                        matched_pattern=None,
+                        matched_source=None,
+                    )
+                )
 
     results.append(
         DiscoveredPath(
@@ -115,7 +163,8 @@ def discover_paths(
 
 def _is_binary_file(path: Path, *, sniff_bytes: int = 8192) -> bool:
     try:
-        data = path.read_bytes()[:sniff_bytes]
+        with path.open("rb") as f:
+            data = f.read(sniff_bytes)
     except OSError:
         return True
     if b"\x00" in data:

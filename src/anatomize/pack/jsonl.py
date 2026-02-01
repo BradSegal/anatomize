@@ -46,6 +46,7 @@ def iter_jsonl_prefix(
         "schema_version": 2,
         "mode": mode.value,
         "root_name": payload.root_name,
+        "prefix_style": payload.prefix_style.value,
         "overview": payload.overview if include_overview else None,
         "encoding_name": payload.encoding_name,
         "compressed": payload.compressed,

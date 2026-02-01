@@ -90,10 +90,12 @@ def dependency_closure(entry_files: list[Path], *, index: PythonModuleIndex) -> 
         raise ValueError("At least one --entry is required for dependency closure")
 
     seen: set[Path] = set()
+    parent: dict[Path, Path | None] = {}
     queue: list[PythonModule] = []
     for f in entry_files:
         mod = index.module_for_path(f)
         queue.append(mod)
+        parent.setdefault(mod.path, None)
 
     while queue:
         current = queue.pop()
@@ -104,16 +106,30 @@ def dependency_closure(entry_files: list[Path], *, index: PythonModuleIndex) -> 
         for init in index.package_inits_for(current.module):
             if init.path not in seen:
                 queue.append(init)
+                parent.setdefault(init.path, current.path)
 
         for imported in _extract_imported_modules(current, index=index):
             target = index.resolve_module(imported)
             if target is None:
                 top = imported.split(".", 1)[0]
                 if index.is_local_toplevel(top):
-                    raise ValueError(f"Unresolved local import '{imported}' from {current.path}")
+                    chain: list[Path] = [current.path]
+                    p = current.path
+                    while True:
+                        prev = parent.get(p)
+                        if prev is None:
+                            break
+                        p = prev
+                        chain.append(p)
+                    chain = list(reversed(chain))
+                    chain_str = "\n".join(f"  - {c}" for c in chain)
+                    raise ValueError(
+                        f"Unresolved local import '{imported}' from {current.path}\nImport chain:\n{chain_str}"
+                    )
                 continue
             if target.path not in seen:
                 queue.append(target)
+                parent.setdefault(target.path, current.path)
 
     return sorted(seen)
 

@@ -24,6 +24,10 @@ class ContentEncoding(str, Enum):
     FENCE_SAFE = "fence-safe"
     BASE64 = "base64"
 
+class PrefixStyle(str, Enum):
+    STANDARD = "standard"
+    MINIMAL = "minimal"
+
 
 @dataclass(frozen=True)
 class PackFile:
@@ -45,6 +49,7 @@ class PackPayload:
     line_numbers: bool
     include_structure: bool
     include_files: bool
+    prefix_style: PrefixStyle = PrefixStyle.STANDARD
 
 
 def default_output_path(fmt: PackFormat) -> Path:
@@ -194,6 +199,7 @@ def render_prefix(
     payload: PackPayload, *, fmt: PackFormat, include_structure: bool, include_overview: bool = True
 ) -> str:
     """Render the deterministic prefix for streaming/splitting writers."""
+    prefix_style = payload.prefix_style
     if fmt is PackFormat.MARKDOWN:
         if payload.content_encoding is ContentEncoding.VERBATIM:
             raise ValueError("Markdown output requires --content-encoding fence-safe or base64")
@@ -201,16 +207,17 @@ def render_prefix(
         lines: list[str] = []
         lines.append("# Code Pack")
         lines.append("")
-        lines.append("This is a deterministic, token-efficient snapshot for AI review.")
-        lines.append("")
-        lines.append("## How to use")
-        lines.append("- Start with **Structure** to understand the repository layout.")
-        lines.append("- Jump to **Files** to read specific paths.")
-        lines.append("- Binary files are listed but content is omitted.")
-        lines.append("- If this is too large/noisy, re-run with `--include/--ignore`, dependency slicing,")
-        lines.append("  or `--compress`.")
-        lines.append("")
-        lines.append("## Summary")
+        if prefix_style is PrefixStyle.STANDARD:
+            lines.append("This is a deterministic, token-efficient snapshot for AI review.")
+            lines.append("")
+            lines.append("## How to use")
+            lines.append("- Start with **Structure** to understand the repository layout.")
+            lines.append("- Jump to **Files** to read specific paths.")
+            lines.append("- Binary files are listed but content is omitted.")
+            lines.append("- If this is too large/noisy, re-run with `--include/--ignore`, dependency slicing,")
+            lines.append("  or `--compress`.")
+            lines.append("")
+            lines.append("## Summary")
         lines.append(f"- Root: `{payload.root_name}`")
         lines.append(f"- Encoding: `{payload.encoding_name}`")
         lines.append(f"- Compressed: `{payload.compressed}`")
@@ -237,8 +244,9 @@ def render_prefix(
     if fmt is PackFormat.PLAIN:
         plain_lines: list[str] = []
         plain_lines.append("CODE_PACK")
-        plain_lines.append("This is a deterministic, token-efficient snapshot for AI review.")
-        plain_lines.append("")
+        if prefix_style is PrefixStyle.STANDARD:
+            plain_lines.append("This is a deterministic, token-efficient snapshot for AI review.")
+            plain_lines.append("")
         plain_lines.append(f"ROOT: {payload.root_name}")
         plain_lines.append(f"ENCODING: {payload.encoding_name}")
         plain_lines.append(f"COMPRESSED: {payload.compressed}")
@@ -250,10 +258,11 @@ def render_prefix(
                 f"binary={sel.get('binary_files')} bytes={sel.get('total_bytes')}"
             )
         plain_lines.append("")
-        plain_lines.append("NOTES:")
-        plain_lines.append("- Structure is a tree of selected paths.")
-        plain_lines.append("- File contents follow; binary content is omitted.")
-        plain_lines.append("")
+        if prefix_style is PrefixStyle.STANDARD:
+            plain_lines.append("NOTES:")
+            plain_lines.append("- Structure is a tree of selected paths.")
+            plain_lines.append("- File contents follow; binary content is omitted.")
+            plain_lines.append("")
         if include_structure and payload.include_structure:
             plain_lines.append("STRUCTURE:")
             plain_lines.extend(payload.structure_paths)

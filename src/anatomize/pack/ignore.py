@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from anatomize.core.exclude import Excluder
+from anatomize.core.exclude import Excluder, IgnorePattern
 
 DEFAULT_IGNORE_PATTERNS: list[str] = [
     "__pycache__/",
@@ -44,19 +44,19 @@ STANDARD_IGNORE_FILES: list[str] = [
 def build_excluder(
     root: Path, *, ignore: list[str], ignore_files: list[Path], respect_standard_ignores: bool
 ) -> Excluder:
-    patterns: list[str] = []
-    patterns.extend(DEFAULT_IGNORE_PATTERNS)
+    patterns: list[IgnorePattern] = []
+    patterns.extend((p, "default") for p in DEFAULT_IGNORE_PATTERNS)
 
     if respect_standard_ignores:
         for rel in STANDARD_IGNORE_FILES:
             p = root / rel
             if p.exists() and p.is_file():
-                patterns.extend(_read_patterns_file(p))
+                patterns.extend((line, f"standard_ignore_file:{rel}") for line in _read_patterns_file(p))
 
     for p in ignore_files:
-        patterns.extend(_read_patterns_file(p))
+        patterns.extend((line, f"ignore_file:{p}") for line in _read_patterns_file(p))
 
-    patterns.extend(ignore)
+    patterns.extend((line, "cli") for line in ignore)
     return Excluder(patterns)
 
 

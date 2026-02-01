@@ -2,7 +2,7 @@
 
 ### Versions
 - `repomix`: 1.11.1
-- `anatomize`: 0.1.0
+- `anatomize`: 0.2.1
 - `tiktoken`: 0.12.0
 
 ### Method

@@ -23,7 +23,7 @@ from anatomize.core.policy import SymlinkPolicy
 from anatomize.core.types import ResolutionLevel
 from anatomize.formats import OutputFormat, write_skeleton
 from anatomize.generators.main import SkeletonGenerator
-from anatomize.pack.formats import ContentEncoding, PackFormat
+from anatomize.pack.formats import ContentEncoding, PackFormat, PrefixStyle, default_output_path
 from anatomize.pack.limit import OutputLimit, parse_output_limit
 from anatomize.pack.mode import PackMode
 from anatomize.pack.slicing import SliceBackend
@@ -259,7 +259,7 @@ def generate(
     Examples
     --------
         anatomize generate ./src
-        anatomize generate ./src --output .skeleton --level signatures
+        anatomize generate ./src --output .anatomy --level signatures
         anatomize generate ./src -f yaml -f json -f markdown
     """
     try:
@@ -530,8 +530,8 @@ def validate(
 
     Examples
     --------
-        anatomize validate .skeleton --source ./src
-        anatomize validate .skeleton -s ./src -s ./tests --fix
+        anatomize validate .anatomy --source ./src
+        anatomize validate .anatomy -s ./src -s ./tests --fix
     """
     try:
         from anatomize.validation import validate_skeleton_dir
@@ -643,6 +643,24 @@ def pack(
     mode: Annotated[
         str | None,
         typer.Option("--mode", help="Pack mode: bundle or hybrid (hybrid requires jsonl)."),
+    ] = None,
+    prefix: Annotated[
+        str | None,
+        typer.Option("--prefix", help="Pack prefix style: standard or minimal."),
+    ] = None,
+    explain_selection: Annotated[
+        bool,
+        typer.Option(
+            "--explain-selection",
+            help="Write a deterministic selection report (why files were included/excluded).",
+        ),
+    ] = False,
+    explain_selection_output: Annotated[
+        Path | None,
+        typer.Option(
+            "--explain-selection-output",
+            help="Selection report output path (default derived from --output).",
+        ),
     ] = None,
     include: Annotated[
         list[str] | None,
@@ -844,15 +862,25 @@ def pack(
                 )
         else:
             if resolved_mode is PackMode.HYBRID:
-                if inferred_from_output is not None and inferred_from_output is not PackFormat.JSONL:
-                    raise ValueError("--mode hybrid requires JSONL output (.jsonl)")
-                resolved_fmt = PackFormat.JSONL
+                if inferred_from_output is not None:
+                    if inferred_from_output not in (PackFormat.JSONL, PackFormat.MARKDOWN, PackFormat.PLAIN):
+                        raise ValueError("--mode hybrid supports only markdown, plain, or jsonl output")
+                    resolved_fmt = inferred_from_output
+                else:
+                    resolved_fmt = PackFormat.MARKDOWN
             else:
                 resolved_fmt = inferred_from_output if inferred_from_output is not None else pack_cfg.format
 
         resolved_deps = bool(entry) if deps is None else deps
         resolved_backend = pack_cfg.slice_backend if slice_backend is None else SliceBackend(slice_backend)
 
+        resolved_prefix = pack_cfg.prefix if prefix is None else PrefixStyle(prefix)
+        if resolved_mode is PackMode.HYBRID and resolved_fmt not in (
+            PackFormat.JSONL,
+            PackFormat.MARKDOWN,
+            PackFormat.PLAIN,
+        ):
+            raise ValueError("--mode hybrid supports only markdown, plain, or jsonl output")
         resolved_include = pack_cfg.include if include is None else include
         resolved_ignore = pack_cfg.ignore if ignore is None else ignore
         resolved_ignore_files = (
@@ -902,11 +930,23 @@ def pack(
             [Path(p) for p in pack_cfg.python_roots] if python_root is None else python_root
         )
 
+        selection_report_path: Path | None = None
+        if explain_selection:
+            base = resolved_output if resolved_output is not None else default_output_path(resolved_fmt)
+            base = base.resolve()
+            selection_report_path = (
+                explain_selection_output.resolve()
+                if explain_selection_output is not None
+                else base.with_name(base.name + ".selection.json")
+            )
+
         res = run_pack(
             root=root,
             output=resolved_output,
             fmt=resolved_fmt,
             mode=resolved_mode,
+            prefix_style=resolved_prefix,
+            selection_report_output=selection_report_path,
             include=resolved_include,
             ignore=resolved_ignore,
             ignore_files=resolved_ignore_files,
@@ -941,6 +981,8 @@ def pack(
 
         for a in res.artifacts:
             typer.echo(f"Wrote: {a.path}")
+        if selection_report_path is not None:
+            typer.echo(f"Selection report: {selection_report_path}")
         total_artifact_tokens = sum(a.tokens for a in res.artifacts)
         typer.echo(f"Artifact tokens: {total_artifact_tokens:,} ({resolved_token_encoding})")
         typer.echo(f"Content tokens:  {res.content_tokens:,} ({resolved_token_encoding})")

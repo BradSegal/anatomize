@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -14,12 +15,13 @@ from anatomize.core.exclude import Excluder
 from anatomize.core.policy import SymlinkPolicy
 from anatomize.pack.compress import compress_python_file
 from anatomize.pack.deps import PythonModuleIndex, dependency_closure, reverse_dependency_closure
-from anatomize.pack.discovery import discover_paths
+from anatomize.pack.discovery import DiscoveredPath, DiscoveryTraceItem, discover_paths
 from anatomize.pack.formats import (
     ContentEncoding,
     PackFile,
     PackFormat,
     PackPayload,
+    PrefixStyle,
     default_output_path,
     infer_pack_format_from_output_path,
     render,
@@ -164,14 +166,30 @@ def _process_one_file_hybrid(
             content=None,
             content_field_tokens=None,
         )
-        pf = PackFile(path=rel_posix, language=None, is_binary=True, content=None)
+        pf = PackFile(
+            path=rel_posix,
+            language=None,
+            is_binary=False,
+            content=_render_hybrid_meta(
+                path=rel_posix,
+                language=None,
+                size_bytes=size_bytes,
+                is_binary=True,
+            ),
+        )
         return jf, pf, 0, None, FileRepresentation.META
 
     language = _language_for_path(abs_path)
-    default_rep = FileRepresentation.SUMMARY if abs_path.suffix == ".py" else FileRepresentation.META
+    default_rep = (
+        FileRepresentation.META
+        if not include_files
+        else (FileRepresentation.SUMMARY if abs_path.suffix == ".py" else FileRepresentation.META)
+    )
     rep = policy.resolve(rel_posix, is_dir=False, default=default_rep)
     if rep is FileRepresentation.CONTENT and not include_files:
         raise ValueError(f"Content requested but --no-files is set: {rel_posix}")
+    if rep is FileRepresentation.SUMMARY and not include_files:
+        raise ValueError(f"Summary requested but --no-files is set: {rel_posix}")
 
     try:
         raw_text = _read_text(abs_path)
@@ -219,9 +237,27 @@ def _process_one_file_hybrid(
     )
     pf = PackFile(
         path=rel_posix,
-        language=language,
+        language=language if rep is FileRepresentation.CONTENT else None,
         is_binary=False,
-        content=content if rep is FileRepresentation.CONTENT else None,
+        content=(
+            content
+            if rep is FileRepresentation.CONTENT
+            else (
+                _render_hybrid_meta(
+                    path=rel_posix,
+                    language=language,
+                    size_bytes=size_bytes,
+                    is_binary=False,
+                )
+                if rep is FileRepresentation.META
+                else _render_hybrid_summary(
+                    path=rel_posix,
+                    language=language,
+                    size_bytes=size_bytes,
+                    summary=summary or {},
+                )
+            )
+        ),
     )
     return jf, pf, content_tokens, summary, rep
 
@@ -242,6 +278,8 @@ def pack(
     token_encoding: str,
     compress: bool,
     content_encoding: ContentEncoding = ContentEncoding.FENCE_SAFE,
+    prefix_style: PrefixStyle = PrefixStyle.STANDARD,
+    selection_report_output: Path | None = None,
     line_numbers: bool = False,
     include_structure: bool = True,
     include_files: bool = True,
@@ -268,8 +306,13 @@ def pack(
     if mode is PackMode.HYBRID:
         if compress:
             raise ValueError("--compress is not supported in --mode hybrid")
-        if fmt is not PackFormat.JSONL:
-            raise ValueError("--mode hybrid requires --format jsonl")
+        if fmt not in (PackFormat.JSONL, PackFormat.MARKDOWN, PackFormat.PLAIN):
+            raise ValueError("--mode hybrid supports only markdown, plain, or jsonl output")
+        if fit_to_max_output:
+            if fmt is not PackFormat.JSONL:
+                raise ValueError("--fit-to-max-output is only supported with --mode hybrid --format jsonl")
+            if max_output is None:
+                raise ValueError("--fit-to-max-output requires --max-output")
 
     excluder = build_excluder(
         root,
@@ -278,12 +321,14 @@ def pack(
         respect_standard_ignores=respect_standard_ignores,
     )
 
+    trace: list[DiscoveryTraceItem] | None = [] if selection_report_output is not None else None
     discovered = discover_paths(
         root,
         excluder=excluder,
         include_patterns=include if include else None,
         symlinks=symlinks,
         max_file_bytes=max_file_bytes,
+        trace=trace,
     )
 
     file_paths = [d for d in discovered if not d.is_dir]
@@ -377,6 +422,28 @@ def pack(
         )
 
     selected_file_paths = [d for d in file_paths if selected_files is None or d.absolute_path in selected_files]
+    if selection_report_output is not None:
+        _write_selection_report(
+            selection_report_output,
+            root_name=root.name,
+            include_patterns=include,
+            excluder=excluder,
+            respect_standard_ignores=respect_standard_ignores,
+            ignore_files=ignore_files,
+            symlinks=symlinks,
+            max_file_bytes=max_file_bytes,
+            mode=mode,
+            entries=entries,
+            deps=deps,
+            target=target,
+            target_module=target_module,
+            reverse_deps=reverse_deps,
+            uses=uses,
+            slice_backend=slice_backend,
+            discovered_files=file_paths,
+            selected_files=selected_file_paths,
+            trace=(trace or []),
+        )
     size_by_rel: dict[str, int] = {d.relative_posix: d.size_bytes for d in selected_file_paths}
     is_binary_by_rel: dict[str, bool] = {d.relative_posix: d.is_binary for d in selected_file_paths}
 
@@ -549,6 +616,7 @@ def pack(
         encoding_name=token_encoding,
         compressed=compress,
         content_encoding=content_encoding,
+        prefix_style=prefix_style,
         line_numbers=line_numbers,
         include_structure=include_structure,
         include_files=include_files,
@@ -716,6 +784,52 @@ def _add_line_numbers(text: str) -> str:
     # Preserve trailing newline behavior: always end with newline if input ended with one.
     suffix = "\n" if text.endswith("\n") else ""
     return "\n".join(out) + suffix
+
+
+def _dump_compact(obj: Any, *, indent: int = 0) -> list[str]:
+    sp = " " * indent
+    if isinstance(obj, dict):
+        lines: list[str] = []
+        for k in sorted(obj.keys(), key=lambda x: str(x)):
+            v = obj[k]
+            if isinstance(v, (dict, list)):
+                lines.append(f"{sp}{k}:")
+                lines.extend(_dump_compact(v, indent=indent + 2))
+            else:
+                lines.append(f"{sp}{k}: {v}")
+        return lines
+    if isinstance(obj, list):
+        lines = []
+        for item in obj:
+            if isinstance(item, (dict, list)):
+                lines.append(f"{sp}-")
+                lines.extend(_dump_compact(item, indent=indent + 2))
+            else:
+                lines.append(f"{sp}- {item}")
+        return lines
+    return [f"{sp}{obj}"]
+
+
+def _render_hybrid_meta(*, path: str, language: str | None, size_bytes: int, is_binary: bool) -> str:
+    doc = {
+        "representation": "meta",
+        "path": path,
+        "language": language,
+        "size_bytes": size_bytes,
+        "is_binary": is_binary,
+    }
+    return "\n".join(_dump_compact(doc)) + "\n"
+
+
+def _render_hybrid_summary(*, path: str, language: str | None, size_bytes: int, summary: dict[str, Any]) -> str:
+    doc: dict[str, Any] = {
+        "representation": "summary",
+        "path": path,
+        "language": language,
+        "size_bytes": size_bytes,
+        "summary": summary,
+    }
+    return "\n".join(_dump_compact(doc)) + "\n"
 
 
 def _build_split_output(
@@ -887,6 +1001,124 @@ def _atomic_write_many(writes: list[tuple[Path, str]]) -> None:
                     tmp_path.unlink()
             except OSError:
                 pass
+
+
+def _write_selection_report(
+    path: Path,
+    *,
+    root_name: str,
+    include_patterns: list[str],
+    excluder: Excluder,
+    respect_standard_ignores: bool,
+    ignore_files: list[Path],
+    symlinks: SymlinkPolicy,
+    max_file_bytes: int,
+    mode: PackMode,
+    entries: list[Path],
+    deps: bool,
+    target: Path | None,
+    target_module: str | None,
+    reverse_deps: bool,
+    uses: bool,
+    slice_backend: SliceBackend,
+    discovered_files: list[DiscoveredPath],
+    selected_files: list[DiscoveredPath],
+    trace: list[DiscoveryTraceItem],
+) -> None:
+    path = path.resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    selected_rel = {d.relative_posix for d in selected_files if not d.is_dir}
+    discovered_rel = [d.relative_posix for d in discovered_files if not d.is_dir]
+
+    file_records: dict[str, dict[str, object]] = {}
+    dir_exclusions: list[dict[str, object]] = []
+
+    for t in trace:
+        if t.is_dir:
+            if t.decision == "excluded":
+                dir_exclusions.append(
+                    {
+                        "path": t.path,
+                        "reason": t.reason,
+                        "matched_pattern": t.matched_pattern,
+                        "matched_source": t.matched_source,
+                    }
+                )
+            continue
+
+        file_records[t.path] = {
+            "path": t.path,
+            "decision": t.decision,
+            "reason": t.reason,
+            "matched_pattern": t.matched_pattern,
+            "matched_source": t.matched_source,
+        }
+
+    # Apply slicing selection as the final decision layer.
+    for rel in discovered_rel:
+        if rel in selected_rel:
+            rec = file_records.get(rel) or {"path": rel}
+            rec["decision"] = "included"
+            rec["reason"] = None
+            rec["matched_pattern"] = None
+            rec["matched_source"] = None
+            file_records[rel] = rec
+        else:
+            rec = file_records.get(rel) or {"path": rel}
+            rec["decision"] = "excluded"
+            rec["reason"] = "slice"
+            rec["matched_pattern"] = None
+            rec["matched_source"] = None
+            file_records[rel] = rec
+
+    ignore_rules = [
+        {
+            "pattern": r.pattern + ("/" if r.directory_only else ""),
+            "negated": r.negated,
+            "anchored": r.anchored,
+            "directory_only": r.directory_only,
+            "source": r.source,
+        }
+        for r in excluder.rules()
+    ]
+
+    report: dict[str, object] = {
+        "root_name": root_name,
+        "mode": mode.value,
+        "include_patterns": include_patterns,
+        "respect_standard_ignores": respect_standard_ignores,
+        "ignore_files": [str(p) for p in ignore_files],
+        "symlinks": symlinks.value,
+        "max_file_bytes": max_file_bytes,
+        "selection": {
+            "entries": [str(p) for p in entries],
+            "deps": deps,
+            "target": str(target) if target is not None else None,
+            "target_module": target_module,
+            "reverse_deps": reverse_deps,
+            "uses": uses,
+            "slice_backend": slice_backend.value,
+        },
+        "counts": {
+            "discovered_files": len(discovered_rel),
+            "selected_files": len(selected_rel),
+        },
+        "ignore_rules": ignore_rules,
+        "excluded_directories": sorted(dir_exclusions, key=lambda d: str(d["path"])),
+        "files": [file_records[p] for p in sorted(file_records.keys())],
+    }
+
+    text = json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+    tmp = path.with_name(f".{path.name}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _write_jsonl(

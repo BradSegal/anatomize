@@ -23,7 +23,7 @@ class MarkdownFormatter:
     Example
     -------
     >>> formatter = MarkdownFormatter()
-    >>> formatter.write(skeleton, Path(".skeleton"))
+    >>> formatter.write(skeleton, Path(".anatomy"))
     """
 
     def write(self, skeleton: Skeleton, output_dir: Path) -> None:

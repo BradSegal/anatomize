@@ -16,8 +16,10 @@ dist/
 build/
 *.egg-info/
 
-.skeleton/
-.skeleton-*/
+.anatomy/
+.anatomy-*/
+.runtime/
+.runtime-*/
 
 .DS_Store
 Thumbs.db

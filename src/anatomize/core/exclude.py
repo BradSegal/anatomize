@@ -16,10 +16,12 @@ Supported:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from functools import cache
 from pathlib import PurePosixPath
+from typing import TypeAlias
 
 
 @dataclass(frozen=True)
@@ -35,12 +37,23 @@ class ExcludeRule:
     anchored: bool
     directory_only: bool
     has_slash: bool
+    source: str
+
+
+IgnorePattern: TypeAlias = str | tuple[str, str]
 
 
 class Excluder:
-    def __init__(self, patterns: list[str]) -> None:
+    def __init__(self, patterns: Sequence[IgnorePattern]) -> None:
         self._rules: list[ExcludeRule] = []
-        for raw in patterns:
+        for item in patterns:
+            source = "unspecified"
+            raw: str
+            if isinstance(item, tuple):
+                raw, source = item
+            else:
+                raw = item
+
             parsed = parse_ignore_line(raw, allow_negation=True)
             if parsed is None:
                 continue
@@ -67,20 +80,30 @@ class Excluder:
                     anchored=anchored,
                     directory_only=directory_only,
                     has_slash=has_slash,
+                    source=source,
                 )
             )
 
     def is_excluded(self, rel_posix: str, *, is_dir: bool) -> bool:
         """Return True if the given relative path should be excluded."""
+        return self.explain(rel_posix, is_dir=is_dir)[0]
+
+    def rules(self) -> list[ExcludeRule]:
+        return list(self._rules)
+
+    def explain(self, rel_posix: str, *, is_dir: bool) -> tuple[bool, ExcludeRule | None]:
+        """Return (excluded, last_matching_rule_or_None)."""
         rel_posix = rel_posix.strip("/")
         path = PurePosixPath(rel_posix) if rel_posix else PurePosixPath(".")
 
         excluded = False
+        matched: ExcludeRule | None = None
         for rule in self._rules:
             if not self._matches(path, rule, is_dir=is_dir):
                 continue
             excluded = not rule.negated
-        return excluded
+            matched = rule
+        return excluded, matched
 
     def filter_dirnames(self, parent_rel_posix: str, dirnames: list[str]) -> None:
         """Prune excluded directories in-place for os.walk dirnames."""

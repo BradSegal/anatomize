@@ -9,7 +9,7 @@ Example
 >>> from anatomize.formats import write_skeleton
 >>> gen = SkeletonGenerator(sources=["./src"])
 >>> skeleton = gen.generate(level="modules")
->>> write_skeleton(skeleton, ".skeleton", formats=[OutputFormat.YAML])
+>>> write_skeleton(skeleton, ".anatomy", formats=[OutputFormat.YAML])
 """
 
 from anatomize.core.types import (
