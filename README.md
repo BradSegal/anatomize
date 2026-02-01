@@ -62,7 +62,7 @@ anatomize validate
 anatomize validate --fix
 
 # Or validate a specific directory against explicit sources
-anatomize validate .anatomy --source ./src
+anatomize validate .anatomy/src --source ./src
 ```
 
 ### Pack a repository into an AI-friendly bundle

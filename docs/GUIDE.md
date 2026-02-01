@@ -56,6 +56,36 @@ When writing skeleton output to disk:
 
 ## CLI commands (skeletons)
 
+## Configuration (`.anatomize.yaml`)
+
+`anatomize` supports multi-output skeleton generation from a single config file.
+This makes the common workflow “**src detailed, tests minimal**” first-class.
+
+Example:
+```yaml
+output: .anatomy
+
+sources:
+  - path: src
+    output: src
+    level: modules
+  - path: tests
+    output: tests
+    level: hierarchy
+
+# Defaults applied to sources that omit fields
+level: modules
+formats: [yaml, json]
+exclude: [__pycache__/, "*.pyc"]
+symlinks: forbid
+workers: 0
+```
+
+Notes:
+- `output` is the **root** output directory.
+- Each `sources[].output` becomes a **subdirectory** under `output` (must be a safe relative path).
+- In config-driven mode, generation/validation uses the config values (no silent override fallbacks).
+
 ### `generate`
 Generates a skeleton from sources and writes YAML/JSON/Markdown.
 
@@ -82,12 +112,22 @@ anatomize generate
 anatomize validate
 ```
 
+One-shot preset mode (no config file written):
+```bash
+anatomize generate --preset standard
+```
+
 ### `estimate`
 Computes the same skeleton but prints a token estimate and summary.
 
 Example:
 ```bash
 anatomize estimate ./src --level modules
+```
+
+Config-driven estimate:
+```bash
+anatomize estimate
 ```
 
 ### `validate`

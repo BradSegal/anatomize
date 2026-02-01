@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.2.0 - 2026-02-01
+
+### Added
+- Multi-source skeleton workflows via `.anatomize.yaml` (per-source `level`, output subdirectories, and shared defaults).
+- `anatomize init --preset standard` to scaffold the common pattern “src detailed, tests minimal”.
+- Config-driven `anatomize generate|validate|estimate` (single command operates on all configured outputs).
+
+### Changed
+- `.anatomize.yaml` schema now uses `sources: [{path, output, level, ...}]` and writes into a root `output` directory.
+
 ## 0.1.0 - 2026-01-31
 
 ### Added
