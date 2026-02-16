@@ -25,7 +25,7 @@ Outputs are stable across runs for the same repository state:
 - no timestamps
 - stable token counting for the chosen encoding
 
-### Strictness (no soft fallbacks)
+### Strictness
 If a requested operation cannot be satisfied precisely, the command fails:
 - parse errors are hard failures
 - dependency closure selection is complete-or-fail
