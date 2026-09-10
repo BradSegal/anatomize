@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import re
+from bisect import bisect_right
 from enum import Enum
 from pathlib import PurePosixPath
 from typing import Any, Literal
@@ -14,6 +15,7 @@ from pydantic import Field, model_validator
 
 from anatomize._artifacts import BoundedJsonError, JsonLimits, content_id, parse_bounded_json_object, sha256_digest
 from anatomize._errors import AnatomizeError
+from anatomize._r_syntax import R_CALL_PATTERN, balanced_r_end, r_code_mask
 from anatomize.evidence import EvidenceModel, EvidenceStrength, RepositoryEvidence, validate_repository_path
 from anatomize.providers.models import ProviderEnvelope
 
@@ -155,10 +157,14 @@ def extract_python_test_intent(
     validate_repository_path(path)
     try:
         tree = ast.parse(source)
-    except SyntaxError as error:
+    except (SyntaxError, RecursionError) as error:
         raise TestEvidenceError(
             "python_test_syntax_invalid",
-            f"Cannot parse test source at line {error.lineno}",
+            (
+                f"Cannot parse test source at line {error.lineno}"
+                if isinstance(error, SyntaxError)
+                else "Python test syntax exceeds the reader's recursion limit"
+            ),
             remediation="Fix syntax or attach a language-specific provider artifact.",
         ) from error
     intents: list[TestIntent] = []
@@ -228,14 +234,15 @@ def extract_r_test_intent(
     """Extract conservative testthat intent from source without evaluating R."""
     validate_repository_path(path)
     intents: list[TestIntent] = []
-    lines = source.splitlines()
-    for start, end, name, body in _r_test_blocks(lines):
-        calls = sorted(set(re.findall(r"\b([A-Za-z.][\w.]*)\s*\(", body)))
-        assertions = sorted(value for value in calls if value.startswith("expect_"))
+    for start, end, name, body in _r_test_blocks(source):
+        calls = sorted({match.group(1) for match in R_CALL_PATTERN.finditer(body)})
+        assertions = sorted(value for value in calls if value.rsplit("::", 1)[-1].startswith("expect_"))
         expected_exceptions = sorted(
-            value for value in assertions if value in {"expect_error", "expect_warning", "expect_message"}
+            value
+            for value in assertions
+            if value.rsplit("::", 1)[-1] in {"expect_error", "expect_warning", "expect_message"}
         )
-        fixtures = sorted(value for value in calls if value.startswith(("fixture_", "local_")))
+        fixtures = sorted(value for value in calls if value.rsplit("::", 1)[-1].startswith(("fixture_", "local_")))
         parameterizations = ["for"] if re.search(r"\bfor\s*\(", body) else []
         snapshots = sorted(value for value in calls if "snapshot" in value.casefold())
         setup = sorted(value for value in calls if value.startswith(("setup", "teardown", "withr.")))
@@ -245,6 +252,7 @@ def extract_r_test_intent(
             if value
             not in {
                 "test_that",
+                "testthat::test_that",
                 *assertions,
                 *fixtures,
                 *setup,
@@ -723,19 +731,29 @@ def _runtime_observation(**values: Any) -> RuntimeTestObservation:
     return RuntimeTestObservation(observation_id=observation_id, **values)
 
 
-def _r_test_blocks(lines: list[str]) -> list[tuple[int, int, str, str]]:
+def _r_test_blocks(source: str) -> list[tuple[int, int, str, str]]:
     result: list[tuple[int, int, str, str]] = []
-    pattern = re.compile(r"\btest_that\s*\(\s*(['\"])(.*?)\1\s*,\s*\{")
-    for index, line in enumerate(lines):
-        match = pattern.search(line)
+    masked = r_code_mask(source)
+    comments_masked = r_code_mask(source, preserve_quoted=True)
+    newlines = [match.start() for match in re.finditer("\n", source)]
+    pattern = re.compile(r"(?<![\w.:])(?:testthat::)?test_that\s*\(\s*(['\"])(.*?)\1\s*,\s*\{", re.DOTALL)
+    for call in R_CALL_PATTERN.finditer(masked):
+        if call.group(1) not in {"test_that", "testthat::test_that"}:
+            continue
+        match = pattern.match(comments_masked, call.start())
         if match is None:
             continue
-        depth = line[match.start() :].count("{") - line[match.start() :].count("}")
-        end = index
-        while depth > 0 and end + 1 < len(lines):
-            end += 1
-            depth += lines[end].count("{") - lines[end].count("}")
-        result.append((index + 1, end + 1, match.group(2), "\n".join(lines[index : end + 1])))
+        close = balanced_r_end(masked, match.end() - 1)
+        if close is None:
+            continue
+        result.append(
+            (
+                bisect_right(newlines, match.start()) + 1,
+                bisect_right(newlines, close) + 1,
+                match.group(2),
+                masked[match.start() : close + 1],
+            )
+        )
     return result
 
 

@@ -19,7 +19,7 @@ def relative_import_base(module: str, *, is_package: bool, level: int) -> str | 
     package = module if is_package else module.rpartition(".")[0]
     parts = package.split(".") if package else []
     up = level - 1
-    if up > len(parts):
+    if up >= len(parts):
         return None
     return ".".join(parts[: len(parts) - up])
 

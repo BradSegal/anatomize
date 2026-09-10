@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from anatomize._artifacts import BoundedJsonError, JsonLimits, parse_bounded_json_object
 from anatomize.evidence import (
     EvidenceArtifactError,
     SourcePosition,
@@ -33,6 +34,29 @@ from anatomize.sessions import (
 from anatomize.temporal import ComparisonArtifactError, parse_comparison
 
 SESSION_FIXTURE = Path("tests/fixtures/sessions/session-manifest-golden.json")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"value":"\\ud800"}',
+        b'{"\\udfff":1}',
+        b'{"value":1e999}',
+        b'{"value":-1e999}',
+        b'{"value":' + b"1" * 5_000 + b"}",
+    ],
+)
+def test_json_rejects_unencodable_strings_and_unbounded_numbers(raw: bytes) -> None:
+    with pytest.raises(BoundedJsonError) as error:
+        parse_bounded_json_object(raw, limits=JsonLimits(max_bytes=10_000))
+    assert error.value.code == "corrupt"
+
+
+def test_json_preserves_valid_unicode_and_finite_numeric_boundaries() -> None:
+    raw = b'{"value":"\\ud83d\\ude00", "integer":123456789012345678901234567890, "float":1e308}'
+    assert parse_bounded_json_object(raw, limits=JsonLimits(max_bytes=10_000)) == {
+        "value": "😀", "integer": 123456789012345678901234567890, "float": 1e308,
+    }
 
 
 def test_unicode_coordinate_property_round_trips_across_all_provider_conventions() -> None:
@@ -134,6 +158,11 @@ def test_all_public_artifact_parsers_fail_closed_under_deterministic_byte_fuzz()
         b"[]",
         b"{}",
         b'{"schema_version":"99.0.0"}',
+        b'{"value":"\\ud800"}',
+        b'{"\\udfff":1}',
+        b'{"value":1e999}',
+        b'{"value":-1e999}',
+        b'{"value":' + b"1" * 5_000 + b"}",
         bytes(range(256)),
     ]
     corpus.extend(

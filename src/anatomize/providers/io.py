@@ -12,6 +12,7 @@ from anatomize._artifacts import (
     JsonLimits,
     atomic_write_bytes,
     parse_bounded_json_object,
+    read_bounded_bytes,
 )
 from anatomize.providers.models import (
     DEFAULT_MAX_PROVIDER_BYTES,
@@ -45,21 +46,9 @@ def load_provider_envelope(
 ) -> ProviderEnvelope:
     """Load a provider envelope as untrusted bytes without executing code."""
     try:
-        size = path.stat().st_size
-    except OSError as error:
-        raise ProviderEnvelopeError(
-            "provider_artifact_unreadable",
-            f"Cannot read provider artifact: {path.name}",
-            remediation="Check the artifact path and permissions, then retry.",
-        ) from error
-    if size > limits.max_bytes:
-        raise ProviderEnvelopeError(
-            "provider_artifact_too_large",
-            f"Provider artifact is {size} bytes; limit is {limits.max_bytes} bytes",
-            remediation="Regenerate a bounded artifact or increase the explicit trusted limit.",
-        )
-    try:
-        raw = path.read_bytes()
+        raw = read_bounded_bytes(path, max_bytes=limits.max_bytes)
+    except BoundedJsonError as error:
+        raise _provider_json_error(error) from error
     except OSError as error:
         raise ProviderEnvelopeError(
             "provider_artifact_unreadable",

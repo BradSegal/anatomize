@@ -6,7 +6,13 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from anatomize._artifacts import BoundedJsonError, JsonLimits, atomic_write_bytes, parse_bounded_json_object
+from anatomize._artifacts import (
+    BoundedJsonError,
+    JsonLimits,
+    atomic_write_bytes,
+    parse_bounded_json_object,
+    read_bounded_bytes,
+)
 from anatomize._errors import AnatomizeError
 from anatomize.temporal.models import (
     COMPARISON_ARTIFACT_TYPE,
@@ -70,22 +76,16 @@ def parse_comparison(
 def load_comparison(path: Path, *, max_bytes: int = DEFAULT_MAX_COMPARISON_BYTES) -> RepositoryComparison:
     """Load one bounded comparison artifact from disk."""
     try:
-        size = path.stat().st_size
-        if size > max_bytes:
-            raise ComparisonArtifactError(
-                "comparison_artifact_too_large",
-                f"Comparison artifact is {size} bytes; limit is {max_bytes} bytes",
-                remediation="Split the comparison scope or raise an explicit trusted limit.",
-            )
-        return parse_comparison(path.read_bytes(), max_bytes=max_bytes)
-    except ComparisonArtifactError:
-        raise
+        raw = read_bounded_bytes(path, max_bytes=max_bytes)
+    except BoundedJsonError as error:
+        raise _comparison_json_error(error) from error
     except OSError as error:
         raise ComparisonArtifactError(
             "comparison_artifact_unreadable",
             f"Cannot read comparison artifact: {path.name}",
             remediation="Check the artifact path and permissions, then retry.",
         ) from error
+    return parse_comparison(raw, max_bytes=max_bytes)
 
 
 def write_comparison(comparison: RepositoryComparison, path: Path) -> None:

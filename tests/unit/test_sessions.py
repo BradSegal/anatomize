@@ -198,6 +198,38 @@ def test_atomic_store_recovers_prior_generation_after_corruption_and_failed_repl
     assert store.load(recover=True) == first
 
 
+@pytest.mark.parametrize(
+    "corrupt", [b"\xff", b"0" * 66, b"\x00" * 64, b"x" * 1_000_000],
+    ids=["invalid-utf8", "overlong-digest", "nul-digest", "oversized-pointer"],
+)
+def test_store_recovers_previous_generation_for_corrupt_pointer_bytes(tmp_path: Path, corrupt: bytes) -> None:
+    store = SessionStore(tmp_path / "cache")
+    first = _bundle("a")
+    store.publish(first)
+    store.publish(_bundle("b"))
+    (store.root / "CURRENT").write_bytes(corrupt)
+
+    assert store.load() == first
+    with pytest.raises(SessionStoreError) as error:
+        store.load(recover=False)
+    assert error.value.code == "session_cache_unavailable"
+
+
+@pytest.mark.parametrize("timeout", [float("nan"), float("inf"), float("-inf"), -1.0])
+def test_store_rejects_invalid_lock_timeout_before_touching_storage(tmp_path: Path, timeout: float) -> None:
+    store = SessionStore(tmp_path / "cache")
+    with pytest.raises(ValueError, match="finite and nonnegative"):
+        store.publish(_bundle("timeout"), lock_timeout=timeout)
+    assert not store.root.exists()
+
+
+def test_store_accepts_zero_timeout_when_lock_is_available(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "cache")
+    bundle = _bundle("no-wait")
+    store.publish(bundle, lock_timeout=0)
+    assert store.load() == bundle
+
+
 def test_refresh_serializes_writers_and_cancellation_or_partial_failure_preserves_current(
     tmp_path: Path,
 ) -> None:
@@ -330,3 +362,29 @@ def test_manifest_rejects_tampered_content_identity_native_artifact_and_cycles()
     payload["manifest"]["artifacts"][1]["derived_from_ids"] = [first_id]
     with pytest.raises(ValidationError):
         ReviewSessionBundle.model_validate(payload)
+
+
+def test_session_validates_deep_artifact_derivations_without_recursion() -> None:
+    original = _bundle("deep")
+    artifacts = list(original.manifest.artifacts)
+    blobs = list(original.blobs)
+    predecessor = artifacts[-1].artifact_id
+    for ordinal in range(1_500):
+        artifact, blob = build_session_artifact(
+            role=ArtifactRole.AUXILIARY,
+            content=str(ordinal).encode(),
+            media_type="text/plain",
+            portable_path=f"derived/{ordinal}.txt",
+            derived_from_ids=[predecessor],
+        )
+        artifacts.append(artifact)
+        blobs.append(blob)
+        predecessor = artifact.artifact_id
+    values = {
+        name: getattr(original.manifest, name)
+        for name in type(original.manifest).model_fields
+        if name not in {"session_id", "artifact_type", "schema_version", "artifacts"}
+    }
+    manifest = build_session_manifest(artifacts=artifacts, **values)
+    bundle = build_session_bundle(manifest, blobs)
+    assert parse_session_bundle(canonical_session_bundle_bytes(bundle)) == bundle

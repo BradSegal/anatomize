@@ -7,7 +7,7 @@ import zlib
 from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum
-from functools import lru_cache
+from graphlib import CycleError, TopologicalSorter
 from typing import Literal
 
 from pydantic import Field, JsonValue, field_validator, model_validator
@@ -515,7 +515,6 @@ def _require_unique(values: Sequence[object], label: str) -> None:
         raise ValueError(f"{label} must be unique")
 
 
-@lru_cache(maxsize=16)
 def _decode_blob(content: str) -> bytes:
     try:
         compressed = base64.b64decode(content.encode("ascii"), validate=True)
@@ -532,19 +531,7 @@ def _decode_blob(content: str) -> bytes:
 
 
 def _reject_artifact_cycles(artifacts: dict[str, SessionArtifact]) -> None:
-    visiting: set[str] = set()
-    visited: set[str] = set()
-
-    def visit(artifact_id: str) -> None:
-        if artifact_id in visiting:
-            raise ValueError("session artifact derivation graph contains a cycle")
-        if artifact_id in visited:
-            return
-        visiting.add(artifact_id)
-        for dependency in artifacts[artifact_id].derived_from_ids:
-            visit(dependency)
-        visiting.remove(artifact_id)
-        visited.add(artifact_id)
-
-    for artifact_id in artifacts:
-        visit(artifact_id)
+    try:
+        TopologicalSorter({key: artifact.derived_from_ids for key, artifact in artifacts.items()}).prepare()
+    except CycleError as error:
+        raise ValueError("session artifact derivation graph contains a cycle") from error

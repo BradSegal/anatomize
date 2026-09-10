@@ -18,6 +18,13 @@ Observation and judgement remain separate. Anatomize records candidates,
 omissions, and conflicts; an agent or person owns the resulting decision.
 Source content is excluded unless the caller explicitly includes it.
 
+The built-in readers cover Python packages and scripts, R packages and analyses,
+Jupyter notebooks, Quarto, and R Markdown. R support includes function and
+namespace declarations, testthat intent, and declared data access; it does not
+require an R installation. Static evidence has explicit limits, including
+dynamic Python imports and R dispatch or non-standard evaluation. See
+[language coverage](docs/PROVIDERS.md#built-in-language-coverage) for details.
+
 ## Install
 
 Anatomize requires Python 3.10 or later.

@@ -13,6 +13,7 @@ from anatomize._artifacts import (
     atomic_write_bytes,
     canonical_ordered_json_bytes,
     parse_bounded_json_object,
+    read_bounded_bytes,
     sha256_digest,
 )
 from anatomize.dossiers import Dossier, DossierRequest
@@ -105,15 +106,13 @@ def load_review_artifact(
 ) -> BaseModel:
     """Read and validate one bounded public review artifact."""
     try:
-        if path.stat().st_size > max_bytes:
-            raise ReviewApplicationError(
-                "review_artifact_too_large",
-                f"Review artifact exceeds the {max_bytes}-byte limit: {path.name}",
-                remediation="Use a narrower dossier or raise an explicit trusted limit.",
-            )
-        raw = path.read_bytes()
-    except ReviewApplicationError:
-        raise
+        raw = read_bounded_bytes(path, max_bytes=max_bytes)
+    except BoundedJsonError as error:
+        raise ReviewApplicationError(
+            f"review_artifact_{error.code}",
+            f"Review artifact {error}",
+            remediation="Use a narrower dossier or raise an explicit trusted limit.",
+        ) from error
     except OSError as error:
         raise ReviewApplicationError(
             "review_artifact_unreadable",
@@ -163,7 +162,7 @@ def artifact_identity(artifact: BaseModel) -> str:
 def json_object(path: Path, *, max_bytes: int = 4 * 1024 * 1024) -> dict[str, Any]:
     """Load a bounded auxiliary JSON object used by explicit lifecycle commands."""
     try:
-        raw = path.read_bytes()
+        raw = read_bounded_bytes(path, max_bytes=max_bytes)
         value = parse_bounded_json_object(
             raw,
             limits=JsonLimits(max_bytes=max_bytes, max_depth=32, max_values=100_000, max_string_bytes=1_000_000),

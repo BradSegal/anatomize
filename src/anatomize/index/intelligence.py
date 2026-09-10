@@ -6,6 +6,7 @@ import ast
 import copy
 import hashlib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,6 +49,7 @@ class _ScopeInfo:
     aliases: dict[str, str]
     modules: dict[str, str]
     shadowed: set[str]
+    receiver: tuple[str, str] | None = None
 
 
 class _BindingCollector(ast.NodeVisitor):
@@ -71,12 +73,18 @@ class _BindingCollector(ast.NodeVisitor):
         for alias in node.names:
             if alias.name == "*":
                 continue
-            self.imported_names[alias.asname or alias.name] = f"{resolved}.{alias.name}"
+            local = alias.asname or alias.name
+            target = f"{resolved}.{alias.name}"
+            if local in self.imported_modules or self.imported_names.get(local, target) != target:
+                self.other_bound.add(local)
+            self.imported_names[local] = target
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             local = alias.asname or alias.name.split(".", 1)[0]
             imported = alias.name if alias.asname else alias.name.split(".", 1)[0]
+            if local in self.imported_names or self.imported_modules.get(local, imported) != imported:
+                self.other_bound.add(local)
             self.imported_modules[local] = imported
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -95,11 +103,36 @@ class _BindingCollector(ast.NodeVisitor):
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             self.other_bound.add(node.id)
 
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name is not None:
+            self.other_bound.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        if node.name is not None:
+            self.other_bound.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchStar(self, node: ast.MatchStar) -> None:
+        if node.name is not None:
+            self.other_bound.add(node.name)
+
+    def visit_MatchMapping(self, node: ast.MatchMapping) -> None:
+        if node.rest is not None:
+            self.other_bound.add(node.rest)
+        self.generic_visit(node)
+
+    def visit_comprehension(self, node: ast.comprehension) -> None:
+        # Iteration targets belong to the comprehension's implicit function.
+        self.visit(node.iter)
+        for condition in node.ifs:
+            self.visit(condition)
+
 
 def definition_fingerprints(node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> DefinitionFingerprints:
     """Return exact and definition-name-normalized AST identities."""
     exact = hashlib.sha256(ast.dump(node, include_attributes=False).encode("utf-8")).hexdigest()
-    normalized = copy.deepcopy(node)
+    normalized = copy.copy(node)
     normalized.name = "_"
     structural = hashlib.sha256(ast.dump(normalized, include_attributes=False).encode("utf-8")).hexdigest()
     return DefinitionFingerprints(
@@ -177,6 +210,9 @@ class _ReferenceVisitor(ast.NodeVisitor):
         self._visit_function(node)
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        for expression in (*node.decorator_list, *node.args.defaults, *node.args.kw_defaults):
+            if expression is not None:
+                self.visit(expression)
         arguments = {
             argument.arg
             for argument in (
@@ -189,7 +225,20 @@ class _ReferenceVisitor(ast.NodeVisitor):
             arguments.add(node.args.vararg.arg)
         if node.args.kwarg is not None:
             arguments.add(node.args.kwarg.arg)
-        self.scopes.append(self._scope("function", node.body, extra_shadowed=arguments))
+        positional = [*node.args.posonlyargs, *node.args.args]
+        receiver = None
+        static_method = any(
+            (isinstance(decorator, ast.Name) and decorator.id == "staticmethod")
+            or (isinstance(decorator, ast.Attribute) and decorator.attr == "staticmethod")
+            for decorator in node.decorator_list
+        )
+        if (
+            self.scopes[-1].kind == "class" and self.classes[-1] is not None
+            and positional and positional[0].arg in {"self", "cls"}
+            and not static_method
+        ):
+            receiver = (positional[0].arg, self.classes[-1])
+        self.scopes.append(self._scope("function", node.body, extra_shadowed=arguments, receiver=receiver))
         self.owners.append(self.symbols_by_location.get((node.lineno, node.col_offset)))
         for statement in node.body:
             self.visit(statement)
@@ -197,6 +246,8 @@ class _ReferenceVisitor(ast.NodeVisitor):
         self.scopes.pop()
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for expression in (*node.decorator_list, *node.bases, *(item.value for item in node.keywords)):
+            self.visit(expression)
         self.scopes.append(self._scope("class", node.body))
         owner = self.symbols_by_location.get((node.lineno, node.col_offset))
         self.owners.append(owner)
@@ -209,11 +260,48 @@ class _ReferenceVisitor(ast.NodeVisitor):
         self.scopes.pop()
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
+        for expression in (*node.args.defaults, *node.args.kw_defaults):
+            if expression is not None:
+                self.visit(expression)
         arguments = {argument.arg for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)}
-        self.scopes.append(_ScopeInfo(kind="function", aliases={}, modules={}, shadowed=arguments))
+        if node.args.vararg is not None:
+            arguments.add(node.args.vararg.arg)
+        if node.args.kwarg is not None:
+            arguments.add(node.args.kwarg.arg)
+        self.scopes.append(self._scope("function", [node.body], extra_shadowed=arguments))
         self.owners.append(self.owners[-1] if self.owners else None)
         self.visit(node.body)
         self.owners.pop()
+        self.scopes.pop()
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self._visit_comprehension(node.generators, [node.elt])
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        self._visit_comprehension(node.generators, [node.elt])
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        self._visit_comprehension(node.generators, [node.key, node.value])
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self._visit_comprehension(node.generators, [node.elt])
+
+    def _visit_comprehension(self, generators: list[ast.comprehension], values: list[ast.expr]) -> None:
+        self.visit(generators[0].iter)
+        targets = {
+            name.id
+            for generator in generators
+            for name in ast.walk(generator.target)
+            if isinstance(name, ast.Name)
+        }
+        self.scopes.append(_ScopeInfo(kind="function", aliases={}, modules={}, shadowed=targets))
+        for index, generator in enumerate(generators):
+            if index:
+                self.visit(generator.iter)
+            for condition in generator.ifs:
+                self.visit(condition)
+        for value in values:
+            self.visit(value)
         self.scopes.pop()
 
     def visit_Name(self, node: ast.Name) -> None:
@@ -225,8 +313,9 @@ class _ReferenceVisitor(ast.NodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if isinstance(node.ctx, ast.Load) and isinstance(node.value, ast.Name):
-            if node.value.id in {"self", "cls"} and self.classes and self.classes[-1] is not None:
-                self._append_candidate(node, f"{self.classes[-1]}.{node.attr}", OccurrenceKind.REFERENCE)
+            receiver_class = self._resolve_receiver(node.value.id)
+            if receiver_class is not None:
+                self._append_candidate(node, f"{receiver_class}.{node.attr}", OccurrenceKind.REFERENCE)
                 return
             module = self._resolve_module(node.value.id)
             if module is not None:
@@ -265,10 +354,11 @@ class _ReferenceVisitor(ast.NodeVisitor):
     def _scope(
         self,
         kind: str,
-        body: list[ast.stmt],
+        body: Iterable[ast.AST],
         *,
         extra_aliases: dict[str, str] | None = None,
         extra_shadowed: set[str] | None = None,
+        receiver: tuple[str, str] | None = None,
     ) -> _ScopeInfo:
         collector = _BindingCollector(module=self.module, is_package=self.is_package)
         for statement in body:
@@ -284,8 +374,27 @@ class _ReferenceVisitor(ast.NodeVisitor):
         for name, target in collector.imported_modules.items():
             if name not in collector.other_bound and name not in collector.definition_bound:
                 modules[name] = target
-        shadowed = collector.other_bound | collector.definition_bound | set(extra_shadowed or set())
-        return _ScopeInfo(kind=kind, aliases=aliases, modules=modules, shadowed=shadowed)
+        for name in extra_shadowed or ():
+            aliases.pop(name, None)
+            modules.pop(name, None)
+        shadowed = (
+            collector.other_bound | collector.definition_bound | set(extra_shadowed or ())
+            | collector.imported_names.keys() | collector.imported_modules.keys()
+        )
+        if receiver is not None and receiver[0] in (
+            collector.other_bound | collector.definition_bound
+            | collector.imported_names.keys() | collector.imported_modules.keys()
+        ):
+            receiver = None
+        return _ScopeInfo(kind=kind, aliases=aliases, modules=modules, shadowed=shadowed, receiver=receiver)
+
+    def _resolve_receiver(self, name: str) -> str | None:
+        for scope in reversed(self.scopes):
+            if scope.kind == "class":
+                continue
+            if name in scope.shadowed:
+                return scope.receiver[1] if scope.receiver is not None and scope.receiver[0] == name else None
+        return None
 
     def _resolve_name(self, name: str) -> str | None:
         for scope in reversed(self.scopes):
@@ -353,6 +462,9 @@ def resolve_symbol_facts(
     by_qualified: dict[str, list[SymbolRecord]] = {}
     for symbol in symbols:
         by_qualified.setdefault(symbol.qualified_name, []).append(symbol)
+    unambiguous = {
+        name: targets for name, targets in by_qualified.items() if len({item.path for item in targets}) == 1
+    }
     occurrences = [
         OccurrenceRecord(
             occurrence_id=f"occurrence:{symbol.symbol_id}:definition",
@@ -372,7 +484,7 @@ def resolve_symbol_facts(
     for candidate in candidates:
         if candidate.alias_qualified_name is None:
             continue
-        targets = by_qualified.get(candidate.target_qualified_name, [])
+        targets = unambiguous.get(candidate.target_qualified_name, [])
         if targets:
             aliases[candidate.alias_qualified_name] = max(
                 targets,
@@ -381,7 +493,7 @@ def resolve_symbol_facts(
     unresolved = 0
     for candidate in candidates:
         qualified = aliases.get(candidate.target_qualified_name, candidate.target_qualified_name)
-        targets = by_qualified.get(qualified, [])
+        targets = unambiguous.get(qualified, [])
         if not targets:
             unresolved += 1
             continue

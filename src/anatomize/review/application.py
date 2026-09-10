@@ -9,7 +9,8 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, JsonValue
 
-from anatomize._artifacts import canonical_json_bytes, sha256_digest
+from anatomize._artifacts import BoundedJsonError, canonical_json_bytes, read_bounded_bytes, sha256_digest
+from anatomize._paths import resolve_inside
 from anatomize.dossiers import (
     DossierBudget,
     DossierContext,
@@ -224,8 +225,24 @@ class ReviewApplication:
         blobs.append(evidence_blob)
 
         selected_sources = _selected_source_paths(index, source_paths)
+        source_digests = {item.path: f"sha256:{item.digest}" for item in index.files}
         for path in selected_sources:
-            source_content = (resolved / path).read_bytes()
+            try:
+                source_content = read_bounded_bytes(
+                    resolve_inside(resolved, path, purpose="Included source"), max_bytes=128 * 1024 * 1024,
+                )
+            except BoundedJsonError as error:
+                raise ReviewApplicationError(
+                    "source_slice_too_large",
+                    f"Included source exceeds the portable session byte limit: {path}",
+                    remediation="Select smaller source files or use the default content-free review.",
+                ) from error
+            if sha256_digest(source_content) != source_digests[path]:
+                raise ReviewApplicationError(
+                    "source_state_changed",
+                    f"Repository source changed during review: {path}",
+                    remediation="Retry review start against a stable repository checkout.",
+                )
             source_artifact, source_blob = build_session_artifact(
                 role=ArtifactRole.SOURCE_SLICE,
                 content=source_content,
@@ -302,6 +319,17 @@ class ReviewApplication:
             artifacts=artifacts,
             omissions=omissions,
         )
+        current = capture_repository_source_state(resolved)
+        if (
+            current.fact_digest != index.source_state.fact_digest
+            or current.commit != index.source_state.commit
+            or current.dirty != index.source_state.dirty
+        ):
+            raise ReviewApplicationError(
+                "source_state_changed",
+                "Repository source changed while the review session was being built",
+                remediation="Retry review start against a stable repository checkout.",
+            )
         return build_session_bundle(manifest, blobs)
 
     def dossier(

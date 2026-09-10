@@ -7,7 +7,13 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from anatomize._artifacts import BoundedJsonError, JsonLimits, atomic_write_bytes, parse_bounded_json_object
+from anatomize._artifacts import (
+    BoundedJsonError,
+    JsonLimits,
+    atomic_write_bytes,
+    parse_bounded_json_object,
+    read_bounded_bytes,
+)
 from anatomize._errors import AnatomizeError
 from anatomize.semantic.models import (
     DEFAULT_MAX_LSP_SEMANTIC_BYTES,
@@ -84,16 +90,9 @@ def load_lsp_semantic_artifact(
 ) -> LspSemanticArtifact:
     """Load one semantic artifact as untrusted bytes."""
     try:
-        size = path.stat().st_size
-        if size > limits.max_bytes:
-            raise LspSemanticArtifactError(
-                "semantic_artifact_too_large",
-                f"Semantic artifact is {size} bytes; limit is {limits.max_bytes} bytes",
-                remediation="Regenerate a bounded capture or increase the explicit trusted limit.",
-            )
-        raw = path.read_bytes()
-    except LspSemanticArtifactError:
-        raise
+        raw = read_bounded_bytes(path, max_bytes=limits.max_bytes)
+    except BoundedJsonError as error:
+        raise _semantic_json_error(error) from error
     except OSError as error:
         raise LspSemanticArtifactError(
             "semantic_artifact_unreadable",

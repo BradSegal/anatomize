@@ -5,12 +5,14 @@ import json
 import pytest
 
 from anatomize._artifacts import sha256_digest
-from anatomize.evidence import ContentClass, FileEntity
+from anatomize.evidence import ContentClass, FileEntity, RepositoryEvidence
 from anatomize.research import (
     CellDeltaKind,
     CellIdentityStrength,
+    NotebookArtifact,
     NotebookArtifactError,
     NotebookCellKind,
+    NotebookExecutionArtifact,
     OutputState,
     compare_notebooks,
     notebook_execution_provider_envelope,
@@ -39,6 +41,34 @@ def _parse(cells: list[dict[str, object]], state: str = "state:after"):  # type:
         source_state_id=state,
         path="analysis.ipynb",
     )
+
+
+def _execution(notebook: NotebookArtifact, payload: dict[str, object]) -> NotebookExecutionArtifact:
+    return parse_notebook_execution(
+        json.dumps(payload).encode(),
+        repository_id=notebook.repository_id,
+        source_state_id=notebook.source_state_id,
+        notebook_document_digest=notebook.document_digest,
+        provider_run_id="run:nbclient",
+        provider_id="nbclient",
+        provider_version="1",
+        environment_digest=sha256_digest(b"python-r-environment"),
+    )
+
+
+def _notebook_baseline(notebook: NotebookArtifact) -> RepositoryEvidence:
+    baseline = _known_truth_evidence()
+    notebook_file = FileEntity(
+        entity_id="entity:notebook",
+        source_state_id=notebook.source_state_id,
+        display_name=notebook.path,
+        path=notebook.path,
+        language="jupyter",
+        digest=notebook.document_digest,
+        size_bytes=100,
+        roles=["notebook"],
+    )
+    return baseline.model_copy(update={"entities": [*baseline.entities, notebook_file]})
 
 
 def test_nbformat_cells_cover_identity_source_semantics_outputs_attachments_and_privacy() -> None:
@@ -166,28 +196,97 @@ def test_execution_artifact_is_separate_source_environment_and_error_evidence() 
     assert execution.notebook_document_digest == notebook.document_digest
     assert execution.environment_digest != notebook.document_digest
 
-    baseline = _known_truth_evidence()
-    notebook_file = FileEntity(
-        entity_id="entity:notebook",
-        source_state_id="state:after",
-        display_name="analysis.ipynb",
-        path="analysis.ipynb",
-        language="jupyter",
-        digest=notebook.document_digest,
-        size_bytes=100,
-        roles=["notebook"],
-    )
-    baseline = baseline.model_copy(update={"entities": [*baseline.entities, notebook_file]})
     envelope = notebook_execution_provider_envelope(
         execution,
         notebook=notebook,
-        baseline=baseline,
+        baseline=_notebook_baseline(notebook),
         configuration_digest=sha256_digest(b"execution-configuration"),
         policy_digest=sha256_digest(b"artifact-only"),
     )
     assert envelope.payload.observations[0].record_type == "runtime_observation"
     assert envelope.payload.observations[0].metrics["environment_digest"] == execution.environment_digest
     assert envelope.payload.completeness[0].status.value == "partial"
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        42,
+        {},
+        {"cell_key": "", "status": "passed"},
+        {"cell_key": "cell", "status": "invalid"},
+        {"cell_key": "cell", "status": "passed", "execution_count": True},
+        {"cell_key": "cell", "status": "passed", "execution_count": "1"},
+        {"cell_key": "cell", "status": "passed", "output_digests": None},
+        {"cell_key": "cell", "status": "passed", "output_digests": "digest"},
+        {"cell_key": "cell", "status": "passed", "output_digests": [123]},
+        {"cell_key": "cell", "status": "passed", "output_digests": ["invalid"]},
+    ],
+)
+def test_execution_summary_rejects_malformed_records_instead_of_omitting_them(record: object) -> None:
+    notebook = _parse([])
+    with pytest.raises(NotebookArtifactError) as error:
+        _execution(notebook, {"status": "complete", "cells": [record]})
+    assert error.value.code == "notebook_execution_invalid"
+
+
+def test_execution_summary_rejects_duplicate_cells_and_malformed_status() -> None:
+    notebook = _parse([])
+    record = {"cell_key": "cell", "status": "passed"}
+    with pytest.raises(NotebookArtifactError, match="failed validation"):
+        _execution(notebook, {"status": "complete", "cells": [record, record]})
+    with pytest.raises(NotebookArtifactError) as error:
+        _execution(notebook, {"status": {}, "cells": []})
+    assert error.value.code == "notebook_execution_shape_invalid"
+
+
+@pytest.mark.parametrize("invalid", ["unknown_cell", "missing_cell", "wrong_digest", "wrong_state"])
+def test_execution_projection_requires_exact_source_membership_and_complete_coverage(invalid: str) -> None:
+    notebook = _parse([
+        {"id": "a", "cell_type": "code", "metadata": {}, "source": "1", "outputs": []},
+        {"id": "b", "cell_type": "code", "metadata": {}, "source": "2", "outputs": []},
+    ])
+    records = [{"cell_key": item.cell_key, "status": "passed"} for item in notebook.cells]
+    baseline = _notebook_baseline(notebook)
+    if invalid == "unknown_cell":
+        records[0]["cell_key"] = "unknown-cell"
+    elif invalid == "missing_cell":
+        records.pop()
+    elif invalid == "wrong_digest":
+        baseline = baseline.model_copy(update={
+            "entities": [
+                entity.model_copy(update={"digest": sha256_digest(b"other notebook")})
+                if entity.entity_id == "entity:notebook" else entity
+                for entity in baseline.entities
+            ]
+        })
+    else:
+        baseline = baseline.model_copy(update={"states": []})
+    execution = _execution(notebook, {"status": "complete", "cells": records})
+    with pytest.raises(ValueError):
+        notebook_execution_provider_envelope(
+            execution, notebook=notebook, baseline=baseline,
+            configuration_digest=sha256_digest(b"configuration"), policy_digest=sha256_digest(b"policy"),
+        )
+
+
+@pytest.mark.parametrize("status", ["complete", "partial"])
+def test_execution_projection_preserves_complete_and_selected_partial_runs(status: str) -> None:
+    notebook = _parse([
+        {"id": "a", "cell_type": "code", "metadata": {}, "source": "1", "outputs": []},
+        {"id": "b", "cell_type": "code", "metadata": {}, "source": "2", "outputs": []},
+    ])
+    cells = notebook.cells if status == "complete" else notebook.cells[:1]
+    execution = _execution(notebook, {
+        "status": status,
+        "cells": [{"cell_key": item.cell_key, "status": "passed", "execution_count": 0} for item in cells],
+    })
+    envelope = notebook_execution_provider_envelope(
+        execution, notebook=notebook, baseline=_notebook_baseline(notebook),
+        configuration_digest=sha256_digest(b"configuration"), policy_digest=sha256_digest(b"policy"),
+    )
+    assert len(envelope.payload.observations) == len(cells)
+    assert envelope.payload.completeness[0].status.value == status
 
 
 def test_cell_delta_distinguishes_reorder_source_output_split_merge_and_add_remove() -> None:

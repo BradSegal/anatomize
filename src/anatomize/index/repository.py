@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import sys
 import tokenize
 from pathlib import Path
@@ -54,7 +55,6 @@ _EXCLUDED_PARTS = {
 }
 _DOCUMENT_SUFFIXES = {".md", ".qmd", ".rst"}
 _INDEXED_DOCUMENT_SUFFIXES = {".md"}
-_CONFIG_SUFFIXES = {".json", ".toml", ".yaml", ".yml"}
 _CONFIG_NAMES = {
     "Makefile",
     "Dockerfile",
@@ -120,13 +120,25 @@ def _assemble_repository_index(
                 module=module_names[path],
                 path=rel,
             )
-        except ValueError as error:
-            parse_failures.append(f"{rel}: {error}")
+        except (ValueError, RecursionError) as error:
+            detail = (
+                "Python syntax exceeds the reader's recursion limit"
+                if isinstance(error, RecursionError)
+                else str(error)
+            )
+            parse_failures.append(f"{rel}: {detail}")
             modules.append(ModuleRecord(module=module_names[path], path=rel))
             continue
         modules.append(module)
         symbols.extend(module_symbols)
         candidates.extend(module_candidates)
+
+    if parse_failures:
+        providers = [
+            item.model_copy(update={"completeness": ProviderCompleteness.PARTIAL})
+            if item.provider_id == PYTHON_AST_PROVIDER else item
+            for item in providers
+        ]
 
     edges = _resolved_import_edges(modules)
     sections: list[DocumentationSection] = []
@@ -239,7 +251,12 @@ def _fact_file_records(root: Path, fact_files: list[Path]) -> list[FileRecord]:
     records: list[FileRecord] = []
     for path in fact_files:
         relative = path.relative_to(root).as_posix()
-        content = path.read_bytes()
+        digest = hashlib.sha256()
+        size = 0
+        with path.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
         is_python = _is_python_source(path)
         suffix = path.suffix.casefold()
         is_r = suffix == ".r"
@@ -290,8 +307,8 @@ def _fact_file_records(root: Path, fact_files: list[Path]) -> list[FileRecord]:
                 file_id=_file_id(relative),
                 path=relative,
                 language=language,
-                digest=hashlib.sha256(content).hexdigest(),
-                size=len(content),
+                digest=digest.hexdigest(),
+                size=size,
                 roles=sorted(roles, key=lambda item: item.value),
                 provider_ids=[provider_id],
             )
@@ -367,11 +384,21 @@ def _repository_files(root: Path) -> list[Path]:
         relative = nul_paths(output)
         files = [root / item for item in relative]
     except ValueError:
-        files = list(root.rglob("*"))
+        files = []
+        for directory, subdirectories, names in os.walk(root):
+            parent = Path(directory)
+            subdirectories[:] = [
+                name
+                for name in subdirectories
+                if repository_path_included(Path(name)) and not (parent / name).is_symlink()
+            ]
+            files.extend(parent / name for name in names)
     return sorted(
         path
         for path in files
-        if path.is_file() and not path.is_symlink() and repository_path_included(path.relative_to(root))
+        if repository_path_included(path.relative_to(root))
+        and path.is_file()
+        and path.resolve() == path
     )
 
 
@@ -430,26 +457,16 @@ def _is_indexed_configuration(path: Path) -> bool:
     )
 
 
-def _fact_provider_id(path: Path) -> str | None:
-    if _is_python_source(path):
-        return PYTHON_AST_PROVIDER
-    if path.suffix.lower() in _INDEXED_DOCUMENT_SUFFIXES:
-        return DOCUMENTATION_TEXT_PROVIDER
-    if _is_indexed_configuration(path):
-        return REPOSITORY_INVENTORY_PROVIDER
-    return None
-
-
 def _parse_python(path: Path) -> tuple[ast.Module, str]:
     try:
         with tokenize.open(path) as handle:
             source = handle.read()
     except (OSError, UnicodeError, SyntaxError) as exc:
-        raise ValueError(f"Failed to read Python source: {path}") from exc
+        raise ValueError(f"Failed to read Python source ({type(exc).__name__})") from exc
     try:
         return ast.parse(source, filename=path.as_posix()), source
     except SyntaxError as exc:
-        raise ValueError(f"Syntax error while indexing {path}: {exc.msg} at line {exc.lineno}") from exc
+        raise ValueError(f"Syntax error: {exc.msg} at line {exc.lineno}") from exc
 
 
 def _module_exports(tree: ast.Module) -> set[str]:
@@ -584,8 +601,6 @@ def _module_imports(
             )
             if resolved:
                 imports.append(resolved)
-                imports.extend(join_module(resolved, alias.name) for alias in node.names if alias.name != "*")
-            if node.module is None and resolved is not None:
                 imports.extend(join_module(resolved, alias.name) for alias in node.names if alias.name != "*")
     return list(dict.fromkeys(imports))
 

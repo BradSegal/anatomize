@@ -1,4 +1,4 @@
-"""Measure deterministic dossier engine construction, cold query, and cache reuse."""
+"""Measure deterministic dossier construction and identity/name query cache reuse."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from anatomize.dossiers import (
     DossierBudget,
     DossierContext,
     DossierEngine,
+    DossierLocator,
     DossierProfile,
     DossierRequest,
     TargetKind,
@@ -52,36 +53,40 @@ def main() -> None:
 
     context = _context(args.entities)
     requests = [_request(context, index * args.entities // args.queries) for index in range(args.queries)]
+    name_requests = [
+        _request(context, index * args.entities // args.queries, by_name=True)
+        for index in range(args.queries)
+    ]
 
     tracemalloc.start()
     started = time.perf_counter()
     engine = DossierEngine(context)
     build_ms = (time.perf_counter() - started) * 1_000
-    cold_ms = []
-    for request in requests:
-        started = time.perf_counter()
-        engine.query(request)
-        cold_ms.append((time.perf_counter() - started) * 1_000)
-    cached_ms = []
-    for request in requests:
-        started = time.perf_counter()
-        engine.query(request)
-        cached_ms.append((time.perf_counter() - started) * 1_000)
+    cold_ms = _query_timings(engine, requests)
+    cached_ms = _query_timings(engine, requests)
+    name_cold_ms = _query_timings(engine, name_requests)
+    name_cached_ms = _query_timings(engine, name_requests)
     _current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
 
     first = engine.query(requests[0])
     repeat = DossierEngine(context).query(requests[0])
     deterministic = canonical_dossier_bytes(first) == canonical_dossier_bytes(repeat)
+    deterministic = deterministic and canonical_dossier_bytes(engine.query(name_requests[0])) == (
+        canonical_dossier_bytes(DossierEngine(context).query(name_requests[0]))
+    )
     result = {
         "schema_version": "1.0.0",
         "entities": args.entities,
         "edges": args.entities - 1,
         "observations": args.entities - 1,
         "queries": args.queries,
+        "query_target_kinds": ["identity", "qualified_name"],
         "engine_build_ms": round(build_ms, 3),
         "cold_query_ms": _summary(cold_ms),
         "cached_query_ms": _summary(cached_ms),
+        "name_cold_query_ms": _summary(name_cold_ms),
+        "name_cached_query_ms": _summary(name_cached_ms),
         "peak_mib": round(peak / 1024 / 1024, 3),
         "cached_query_count": engine.cached_query_count,
         "deterministic": deterministic,
@@ -99,6 +104,10 @@ def main() -> None:
         failures.append("cold_query_p95")
     if float(result["cached_query_ms"]["p95"]) > args.max_cached_p95_ms:
         failures.append("cached_query_p95")
+    if float(result["name_cold_query_ms"]["p95"]) > args.max_cold_p95_ms:
+        failures.append("name_cold_query_p95")
+    if float(result["name_cached_query_ms"]["p95"]) > args.max_cached_p95_ms:
+        failures.append("name_cached_query_p95")
     if peak / 1024 / 1024 > args.max_peak_mib:
         failures.append("peak_memory")
     if not deterministic:
@@ -213,15 +222,31 @@ def _context(count: int) -> DossierContext:
     )
 
 
-def _request(context: DossierContext, index: int) -> DossierRequest:
+def _request(context: DossierContext, index: int, *, by_name: bool = False) -> DossierRequest:
     return build_dossier_request(
         profile=DossierProfile.LOCALISATION,
         question=f"Locate benchmark symbol {index}.",
         session_id=context.session_id,
         session_manifest_digest=context.session_manifest_digest,
-        targets=[TargetSelector(kind=TargetKind.SYMBOL, identity=f"entity:symbol:{index:06d}")],
+        targets=[
+            TargetSelector(
+                kind=TargetKind.SYMBOL,
+                locator=DossierLocator(qualified_name=f"benchmark.symbol_{index:06d}"),
+            )
+            if by_name
+            else TargetSelector(kind=TargetKind.SYMBOL, identity=f"entity:symbol:{index:06d}")
+        ],
         budget=DossierBudget(max_items=32, max_depth=2, max_payload_bytes=131_072),
     )
+
+
+def _query_timings(engine: DossierEngine, requests: list[DossierRequest]) -> list[float]:
+    timings = []
+    for request in requests:
+        started = time.perf_counter()
+        engine.query(request)
+        timings.append((time.perf_counter() - started) * 1_000)
+    return timings
 
 
 def _summary(values: list[float]) -> dict[str, float]:

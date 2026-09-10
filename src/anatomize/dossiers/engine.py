@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from enum import Enum
+from operator import attrgetter
 from typing import Any
 
 from anatomize._artifacts import sha256_digest
@@ -328,6 +329,8 @@ class DossierEngine:
         self.context = context
         self._records: dict[str, _Record] = {}
         self._entities: dict[str, EntityRecord] = {}
+        self._symbols_by_name: dict[str, set[str]] = defaultdict(set)
+        self._symbols_by_qualified_name: dict[str, set[str]] = defaultdict(set)
         self._locations: dict[str, LocationRecord] = {}
         self._edges: dict[str, EdgeRecord] = {}
         self._contracts: dict[str, ContractRecord] = {}
@@ -479,6 +482,10 @@ class DossierEngine:
                 self._add_record(location.location_id, "location", location, location.source_state_id)
             for entity in evidence.entities:
                 self._entities[entity.entity_id] = entity
+                if isinstance(entity, SymbolEntity):
+                    self._symbols_by_qualified_name[entity.qualified_name].add(entity.entity_id)
+                    for name in {entity.name, entity.display_name}:
+                        self._symbols_by_name[name].add(entity.entity_id)
                 self._add_record(entity.entity_id, "entity", entity, entity.source_state_id)
             for edge in evidence.edges:
                 self._edges[edge.edge_id] = edge
@@ -517,17 +524,17 @@ class DossierEngine:
                 self._add_record(conflict.conflict_id, "conflict", conflict, conflict.source_state_id)
             for limitation in evidence.limitations:
                 self._limitations[limitation.limitation_id] = limitation
-        for values in (
-            self._edges_by_source,
-            self._edges_by_target,
-            self._observations_by_record,
-            self._contracts_by_subject,
-            self._candidates_by_member,
-            self._conflicts_by_target,
-            self._lineage_by_endpoint,
+        for values, identity in (
+            (self._edges_by_source, "edge_id"),
+            (self._edges_by_target, "edge_id"),
+            (self._observations_by_record, "observation_id"),
+            (self._contracts_by_subject, "contract_id"),
+            (self._candidates_by_member, "candidate_id"),
+            (self._conflicts_by_target, "conflict_id"),
+            (self._lineage_by_endpoint, "lineage_id"),
         ):
             for records in values.values():
-                records.sort(key=lambda item: _record_identity(item))
+                records.sort(key=attrgetter(identity))
 
     def _add_record(self, record_id: str, kind: str, value: Any, source_state_id: str) -> None:
         if record_id in self._records:
@@ -1860,21 +1867,23 @@ class DossierEngine:
         return min(candidates)[1] if candidates else None
 
     def _with_payload_use(self, dossier: Dossier, initial_size: int) -> Dossier:
+        """Account for the changed decimal width of the payload byte counter."""
+        fixed_size = initial_size - len(str(dossier.budget_use.payload_bytes.used))
         size = initial_size
-        result = dossier
         for _ in range(4):
-            use = result.budget_use.model_copy(
-                update={
-                    "payload_bytes": BudgetCounter(
-                        limit=result.budget_use.payload_bytes.limit,
-                        used=size,
-                    )
-                }
-            )
-            result = result.model_copy(update={"budget_use": use})
-            measured = len(canonical_dossier_bytes(result))
+            # Canonical JSON changes only this nonnegative integer; keys, list
+            # ordering, and content identities retain their exact bytes.
+            measured = fixed_size + len(str(size))
             if measured == size:
-                return result
+                use = dossier.budget_use.model_copy(
+                    update={
+                        "payload_bytes": BudgetCounter(
+                            limit=dossier.budget_use.payload_bytes.limit,
+                            used=size,
+                        )
+                    }
+                )
+                return dossier.model_copy(update={"budget_use": use})
             size = measured
         raise RuntimeError("dossier payload byte accounting did not converge")
 
@@ -1989,17 +1998,33 @@ class DossierEngine:
             )
         alias = self._alias_match(selector)
         if alias is not None:
+            resolved_ids = sorted(item.entity_id for item in alias.candidates)
             status = {
                 IdentityResolutionStatus.EXACT: TargetResolutionStatus.EXACT,
                 IdentityResolutionStatus.AMBIGUOUS: TargetResolutionStatus.AMBIGUOUS,
                 IdentityResolutionStatus.UNRESOLVED: TargetResolutionStatus.UNRESOLVED,
                 IdentityResolutionStatus.CONFLICTING: TargetResolutionStatus.CONFLICTING,
             }[alias.resolution]
+            message = alias.rationale
+            if (
+                selector.kind is TargetKind.SYMBOL
+                and selector.locator is not None
+                and selector.locator.path is not None
+            ):
+                resolved_ids = [
+                    record_id
+                    for record_id in resolved_ids
+                    if isinstance(self._entities.get(record_id), SymbolEntity)
+                    and self._record_has_path(self._records[record_id], selector.locator.path)
+                ]
+                if not resolved_ids:
+                    status = TargetResolutionStatus.UNRESOLVED
+                    message = "No symbol alias candidate matches the requested path."
             return ResolvedTarget(
                 selector=selector,
                 status=status,
-                resolved_ids=sorted(item.entity_id for item in alias.candidates),
-                message=alias.rationale,
+                resolved_ids=resolved_ids,
+                message=message,
             )
         return ResolvedTarget(
             selector=selector,
@@ -2054,6 +2079,18 @@ class DossierEngine:
     def _locator_matches(self, kind: TargetKind, locator: Any, source_state_id: str | None) -> list[str]:
         if locator is None:
             return []
+        if kind is TargetKind.SYMBOL:
+            if locator.qualified_name is not None:
+                symbol_matches = self._symbols_by_qualified_name.get(locator.qualified_name, set())
+            else:
+                symbol_matches = self._symbols_by_name.get(locator.name, set())
+            if locator.path is not None:
+                symbol_matches = {
+                    record_id
+                    for record_id in symbol_matches
+                    if self._record_has_path(self._records[record_id], locator.path)
+                }
+            return self._state_filter(symbol_matches, source_state_id)
         matches: set[str] = set()
         test_files: set[str] = set()
         for record in self._records.values():
@@ -2064,11 +2101,6 @@ class DossierEngine:
                 test_files.add(record.record_id)
             elif kind is TargetKind.FILE and isinstance(value, FileEntity) and locator.path == value.path:
                 matches.add(record.record_id)
-            elif kind is TargetKind.SYMBOL and isinstance(value, SymbolEntity):
-                if locator.qualified_name == value.qualified_name or (
-                    locator.qualified_name is None and locator.name in {value.name, value.display_name}
-                ):
-                    matches.add(record.record_id)
             elif kind is TargetKind.DOCUMENTATION_SECTION and isinstance(value, DocumentationEntity):
                 if locator.heading is not None and locator.heading == value.heading and self._record_has_path(
                     record, locator.path

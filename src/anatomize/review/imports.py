@@ -8,11 +8,12 @@ supply saved result bytes and the exact repository state they describe.
 from __future__ import annotations
 
 import tokenize
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from anatomize._artifacts import content_id, sha256_digest
+from anatomize._artifacts import content_id, read_bounded_bytes, sha256_digest
 from anatomize._errors import AnatomizeError
 from anatomize._paths import resolve_inside
 from anatomize.diagnostics import build_sarif_binding, normalize_sarif_log, parse_sarif_log
@@ -142,7 +143,9 @@ def normalize_builtin_source_facts(
     }
     if not selected:
         return None
-    sources = _trusted_sources(root, baseline, paths=selected)
+    sources = _trusted_sources(
+        root, baseline, paths={path for path in selected if not path.casefold().endswith(".ipynb")},
+    )
     run_id = content_id(
         "provider-run:source-inventory",
         {"state": state.state_id, "paths": sorted(sources), "version": __version__},
@@ -153,6 +156,7 @@ def normalize_builtin_source_facts(
     limitations: list[tuple[str, str, str]] = []
 
     symbols = [item for item in baseline.entities if isinstance(item, SymbolEntity)]
+    python_lookup = _SymbolLookup(symbols)
     for path, source in sorted(sources.items()):
         file = files[path]
         if file.language != "python" or "test" not in file.roles:
@@ -185,7 +189,7 @@ def normalize_builtin_source_facts(
                 state_id=state.state_id,
                 source_entity_id=test.entity_id,
                 references=intent.targets,
-                symbols=symbols,
+                symbols=python_lookup,
                 category=RelationshipCategory.TEST,
                 predicate="statically_exercises",
             )
@@ -193,7 +197,11 @@ def normalize_builtin_source_facts(
     r_sources = {
         path: source
         for path, source in sources.items()
-        if files[path].language == "r" or Path(path).name in {"DESCRIPTION", "NAMESPACE"}
+        if (
+            files[path].language == "r"
+            or Path(path).suffix.casefold() in {".qmd", ".rmd"}
+            or Path(path).name in {"DESCRIPTION", "NAMESPACE"}
+        )
     }
     if r_sources:
         try:
@@ -226,6 +234,7 @@ def normalize_builtin_source_facts(
                 )
                 builder.entities[r_entity.entity_id] = r_entity
                 r_symbols.append(r_entity)
+            r_lookup = _SymbolLookup(r_symbols)
             for call in r_artifact.calls:
                 if call.caller_id is None:
                     continue
@@ -235,7 +244,7 @@ def normalize_builtin_source_facts(
                     state_id=state.state_id,
                     source_entity_id=call.caller_id,
                     references=[call.target],
-                    symbols=r_symbols,
+                    symbols=r_lookup,
                     category=RelationshipCategory.CALL,
                     predicate="static_call",
                 )
@@ -260,7 +269,7 @@ def normalize_builtin_source_facts(
                     state_id=state.state_id,
                     source_entity_id=test_entity.entity_id,
                     references=intent.targets,
-                    symbols=r_symbols,
+                    symbols=r_lookup,
                     category=RelationshipCategory.TEST,
                     predicate="statically_exercises",
                 )
@@ -288,6 +297,9 @@ def normalize_builtin_source_facts(
         except ValueError as error:
             limitations.append(("r_inventory_parse", "repository", _stable_error_summary(error)))
 
+    notebook_lookup = _SymbolLookup(
+        [*symbols, *[item for item in builder.entities.values() if isinstance(item, SymbolEntity)]]
+    )
     for path in sorted(selected):
         suffix = Path(path).suffix.casefold()
         if suffix not in {".ipynb", ".qmd", ".rmd"}:
@@ -297,7 +309,7 @@ def normalize_builtin_source_facts(
         try:
             notebook = (
                 parse_jupyter_notebook(
-                    source_path.read_bytes(),
+                    read_bounded_bytes(source_path, max_bytes=64 * 1024 * 1024),
                     repository_id=baseline.repository_id,
                     source_state_id=state.state_id,
                     path=path,
@@ -342,7 +354,7 @@ def normalize_builtin_source_facts(
                 state_id=state.state_id,
                 source_entity_id=cell_entity.entity_id,
                 references=cell.references,
-                symbols=[*symbols, *[item for item in builder.entities.values() if isinstance(item, SymbolEntity)]],
+                symbols=notebook_lookup,
                 category=(
                     RelationshipCategory.DOCUMENTATION
                     if cell.kind.value == "markdown"
@@ -501,6 +513,33 @@ def _notebook_location(builder: ProviderBatchBuilder, file: FileEntity, cell: ob
     return location_id
 
 
+class _SymbolLookup:
+    """Reuse exact symbol names while retaining every ambiguous lexical match."""
+
+    def __init__(self, symbols: Iterable[SymbolEntity]) -> None:
+        self.by_suffix: dict[str, list[SymbolEntity]] = {}
+        self.by_qualified_name: dict[str, list[SymbolEntity]] = {}
+        for symbol in symbols:
+            suffix = symbol.name.rsplit(".", 1)[-1].rsplit(":", 1)[-1]
+            self.by_suffix.setdefault(suffix, []).append(symbol)
+            self.by_qualified_name.setdefault(symbol.qualified_name, []).append(symbol)
+
+    def candidates(self, reference: str) -> dict[str, SymbolEntity]:
+        candidates = {
+            symbol.entity_id: symbol
+            for symbol in self.by_qualified_name.get(reference, [])
+        }
+        suffix = reference.rsplit(".", 1)[-1].rsplit(":", 1)[-1]
+        for symbol in self.by_suffix.get(suffix, []):
+            if (
+                reference == symbol.name
+                or reference.endswith(f".{symbol.name}")
+                or reference.endswith(f"::{symbol.name}")
+            ):
+                candidates[symbol.entity_id] = symbol
+        return candidates
+
+
 def _reference_edges(
     builder: ProviderBatchBuilder,
     *,
@@ -508,21 +547,13 @@ def _reference_edges(
     state_id: str,
     source_entity_id: str,
     references: list[str],
-    symbols: list[SymbolEntity],
+    symbols: _SymbolLookup,
     category: RelationshipCategory,
     predicate: str,
 ) -> None:
     """Add only unambiguous lexical relations; unresolved names remain unknown."""
     for reference in sorted(set(references)):
-        candidates = [
-            symbol
-            for symbol in symbols
-            if reference == symbol.name
-            or reference == symbol.qualified_name
-            or reference.endswith(f".{symbol.name}")
-            or reference.endswith(f"::{symbol.name}")
-        ]
-        unique = {item.entity_id: item for item in candidates}
+        unique = symbols.candidates(reference)
         if len(unique) != 1:
             continue
         target = next(iter(unique.values()))

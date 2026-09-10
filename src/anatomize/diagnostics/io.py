@@ -7,7 +7,13 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from anatomize._artifacts import BoundedJsonError, JsonLimits, atomic_write_bytes, parse_bounded_json_object
+from anatomize._artifacts import (
+    BoundedJsonError,
+    JsonLimits,
+    atomic_write_bytes,
+    parse_bounded_json_object,
+    read_bounded_bytes,
+)
 from anatomize._errors import AnatomizeError
 from anatomize.diagnostics.models import (
     DEFAULT_MAX_SARIF_BYTES,
@@ -76,16 +82,9 @@ def load_sarif_log(
 ) -> SarifLog:
     """Load one SARIF log as untrusted bytes."""
     try:
-        size = path.stat().st_size
-        if size > limits.max_bytes:
-            raise SarifArtifactError(
-                "sarif_artifact_too_large",
-                f"SARIF artifact is {size} bytes; limit is {limits.max_bytes} bytes",
-                remediation="Produce a bounded report or increase the explicit trusted limit.",
-            )
-        raw = path.read_bytes()
-    except SarifArtifactError:
-        raise
+        raw = read_bounded_bytes(path, max_bytes=limits.max_bytes)
+    except BoundedJsonError as error:
+        raise _sarif_json_error(error) from error
     except OSError as error:
         raise SarifArtifactError(
             "sarif_artifact_unreadable",

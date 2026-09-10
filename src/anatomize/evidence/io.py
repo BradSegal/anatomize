@@ -13,6 +13,7 @@ from anatomize._artifacts import (
     atomic_write_bytes,
     canonical_json_bytes,
     parse_bounded_json_object,
+    read_bounded_bytes,
     sha256_digest,
 )
 from anatomize._errors import AnatomizeError
@@ -35,21 +36,9 @@ def evidence_json_schema() -> dict[str, Any]:
 def load_evidence(path: Path, *, max_bytes: int = DEFAULT_MAX_EVIDENCE_BYTES) -> RepositoryEvidence:
     """Load one bounded current-schema evidence artifact."""
     try:
-        size = path.stat().st_size
-    except OSError as error:
-        raise EvidenceArtifactError(
-            "artifact_unreadable",
-            f"Cannot read evidence artifact: {path.name}",
-            remediation="Check the artifact path and permissions, then retry.",
-        ) from error
-    if size > max_bytes:
-        raise EvidenceArtifactError(
-            "artifact_too_large",
-            f"Evidence artifact is {size} bytes; limit is {max_bytes} bytes",
-            remediation="Increase the explicit trusted limit or regenerate a bounded artifact.",
-        )
-    try:
-        raw = path.read_bytes()
+        raw = read_bounded_bytes(path, max_bytes=max_bytes)
+    except BoundedJsonError as error:
+        raise _evidence_json_error(error) from error
     except OSError as error:
         raise EvidenceArtifactError(
             "artifact_unreadable",

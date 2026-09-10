@@ -107,6 +107,33 @@ def test_r_testthat_intent_is_distinct_and_bounded() -> None:
     assert "expect_snapshot" in intent.snapshots
 
 
+def test_r_testthat_ignores_noncode_and_balances_multiline_namespaced_tests() -> None:
+    source = """# test_that("comment", { expect_error(fake()) })
+text <- r"---(test_that("raw", { expect_error(fake()) }))---"
+testthat::test_that(
+  "actual", {
+  text <- "} expect_warning(ghost())"
+  # } expect_error(fake())
+  `expect_message(fake)` <- 1
+  testthat::expect_equal(actual(1), 1)
+})
+test_that("next", {
+  expect_true(other())
+})
+"""
+    artifact = extract_r_test_intent(
+        source, repository_id="pkg", source_state_id="state:r", path="tests/testthat/test-core.R"
+    )
+    tests = {item.name: item for item in artifact.intents}
+
+    assert set(tests) == {"actual", "next"}
+    assert tests["actual"].locator.start_line == 3 and tests["actual"].locator.end_line == 9
+    assert tests["actual"].targets == ["actual"]
+    assert tests["actual"].assertions == ["testthat::expect_equal"]
+    assert tests["actual"].expected_exceptions == []
+    assert tests["next"].targets == ["other"]
+
+
 def test_junit_preserves_runtime_failure_skip_environment_and_selection() -> None:
     raw = b'''<testsuite><testcase classname="tests.test_core" name="test_answer" time="0.2" />
 <testcase name="test_failure"><failure type="AssertionError">bounded trace</failure></testcase>

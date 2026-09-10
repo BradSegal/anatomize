@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import tempfile
@@ -17,6 +18,7 @@ from anatomize._artifacts import (
     JsonLimits,
     atomic_write_bytes,
     parse_bounded_json_object,
+    read_bounded_bytes,
     sha256_digest,
 )
 from anatomize._errors import AnatomizeError
@@ -90,22 +92,16 @@ def load_session_bundle(
 ) -> ReviewSessionBundle:
     """Read and validate one bounded portable session."""
     try:
-        size = path.stat().st_size
-        if size > max_bytes:
-            raise SessionArtifactError(
-                "session_bundle_too_large",
-                f"Session bundle is {size} bytes; limit is {max_bytes} bytes",
-                remediation="Reduce the session scope or raise an explicit trusted limit.",
-            )
-        return parse_session_bundle(path.read_bytes(), max_bytes=max_bytes)
-    except SessionArtifactError:
-        raise
+        raw = read_bounded_bytes(path, max_bytes=max_bytes)
+    except BoundedJsonError as error:
+        raise _session_json_error(error) from error
     except OSError as error:
         raise SessionArtifactError(
             "session_bundle_unreadable",
             f"Cannot read session bundle: {path.name}",
             remediation="Check the artifact path and permissions, then retry.",
         ) from error
+    return parse_session_bundle(raw, max_bytes=max_bytes)
 
 
 def write_session_bundle(bundle: ReviewSessionBundle, path: Path) -> None:
@@ -239,20 +235,22 @@ class SessionStore:
 
     def _read_pointer(self, name: str) -> str:
         try:
-            value = (self.root / name).read_text(encoding="ascii").strip()
+            with (self.root / name).open("rb") as handle:
+                raw = handle.read(66)
         except OSError as error:
             raise SessionStoreError(
                 "session_pointer_unreadable",
                 f"Cannot read {name} session pointer",
                 remediation="Recover the prior generation or import a portable session bundle.",
             ) from error
-        if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+        value = raw.removesuffix(b"\n")
+        if len(value) != 64 or any(character not in b"0123456789abcdef" for character in value):
             raise SessionStoreError(
                 "session_pointer_corrupt",
                 f"{name} session pointer is corrupt",
                 remediation="Recover the prior generation or import a portable session bundle.",
             )
-        return value
+        return value.decode("ascii")
 
     def _load_generation(self, generation: str) -> ReviewSessionBundle:
         path = self.root / "generations" / generation / "bundle.json"
@@ -269,8 +267,8 @@ class SessionStore:
     @contextmanager
     def _writer_lock(self, *, timeout: float) -> Iterator[None]:
         """Hold an operating-system lock; process death releases it automatically."""
-        if timeout < 0:
-            raise ValueError("session lock timeout cannot be negative")
+        if not math.isfinite(timeout) or timeout < 0:
+            raise ValueError("session lock timeout must be finite and nonnegative")
         self.root.mkdir(parents=True, exist_ok=True)
         lock_path = self.root / ".refresh.lock"
         descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)

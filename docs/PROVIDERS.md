@@ -75,6 +75,20 @@ A passing JUnit suite does not prove unselected tests passed. Coverage does not
 prove correctness. SARIF severity remains the producer's severity. A suggested
 fix remains untrusted input.
 
+## Built-in language coverage
+
+| Source | Built-in evidence | Limits |
+| --- | --- | --- |
+| Python packages and scripts | AST definitions, static imports, lexical references, structural similarity, and test intent. | Ambiguous import roots and bindings are omitted; dynamic imports, runtime dispatch, and inferred types require external evidence. |
+| R packages and analyses | `DESCRIPTION`, multiline `NAMESPACE` declarations, ordinary function assignments, literal data access, and testthat intent. | A conservative lexical reader handles balanced arguments, comments, and quoted/raw strings. Full R grammar, quoted function names, nested scope attribution, compound unbraced bodies, S3/S4 dispatch, R6 behavior, and non-standard evaluation require a qualified R provider. |
+| Jupyter, Quarto, and R Markdown | Cell identities, language, source digests, static definitions/references, and output inventory. Executable documents distinguish code fences from prose and literal examples. | Static cells do not prove execution. Separate execution observations must identify real executable cells and match the notebook, baseline file, and environment. Complete coverage must account for every executable cell. |
+
+The baseline runs without R or external analysis tools. Invalid Python source
+and unreadable R package metadata produce explicit partial evidence while
+retaining the available file and source inventory. Git supplies revision and
+working-tree metadata when available; an ordinary directory can still be
+reviewed without Git.
+
 ## What the advanced provider format records
 
 The rest of this page is API-level guidance for integration authors. The public

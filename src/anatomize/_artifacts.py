@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import tempfile
 import unicodedata
@@ -39,6 +40,20 @@ def require_unique(values: Sequence[str], label: str) -> None:
         raise ValueError(f"{label} must be unique")
 
 
+def read_bounded_bytes(path: Path, *, max_bytes: int) -> bytes:
+    """Bound allocation even when an opened artifact grows or reports no size."""
+    if max_bytes <= 0:
+        raise ValueError("artifact byte limit must be positive")
+    with path.open("rb") as handle:
+        size = os.fstat(handle.fileno()).st_size
+        if size > max_bytes:
+            raise BoundedJsonError("too_large", f"artifact is {size} bytes; limit is {max_bytes}")
+        raw = handle.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise BoundedJsonError("too_large", f"artifact exceeds the {max_bytes}-byte limit")
+    return raw
+
+
 def parse_bounded_json_object(raw: bytes, *, limits: JsonLimits) -> dict[str, Any]:
     """Decode an object while bounding bytes, depth, values, and individual strings."""
     if len(raw) > limits.max_bytes:
@@ -50,12 +65,16 @@ def parse_bounded_json_object(raw: bytes, *, limits: JsonLimits) -> dict[str, An
             text,
             object_pairs_hook=_unique_object,
             parse_constant=_reject_json_constant,
+            parse_int=_bounded_json_integer,
+            parse_float=_finite_json_float,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
+        if not isinstance(payload, dict):
+            raise BoundedJsonError("incomplete", "artifact root must be a JSON object")
+        _validate_json_limits(payload, limits=limits)
+    except BoundedJsonError:
+        raise
+    except (UnicodeError, ValueError, RecursionError) as error:
         raise BoundedJsonError("corrupt", "artifact is not valid bounded UTF-8 JSON") from error
-    if not isinstance(payload, dict):
-        raise BoundedJsonError("incomplete", "artifact root must be a JSON object")
-    _validate_json_limits(payload, limits=limits)
     return payload
 
 
@@ -116,6 +135,21 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def _reject_json_constant(value: str) -> Any:
     raise BoundedJsonError("corrupt", f"artifact contains non-finite JSON number {value}")
+
+
+def _bounded_json_integer(value: str) -> int:
+    # Apply the same conversion bound on every supported Python version,
+    # including runtimes without the interpreter's integer-string limit.
+    if len(value.lstrip("-")) > 4_300:
+        raise BoundedJsonError("corrupt", "artifact integer exceeds 4300 decimal digits")
+    return int(value)
+
+
+def _finite_json_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise BoundedJsonError("corrupt", "artifact contains an overflowing JSON number")
+    return number
 
 
 def _validate_json_limits(value: Any, *, limits: JsonLimits) -> None:

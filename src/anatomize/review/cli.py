@@ -160,7 +160,9 @@ def _provider_artifact_inputs(
     environment_digest: str | None,
 ) -> list[ProviderArtifactInput]:
     """Parse compact CLI artifact declarations without weakening the typed API."""
+    from anatomize._artifacts import read_bounded_bytes
     from anatomize.review import ProviderArtifactInput, ProviderArtifactKind
+    from anatomize.review.io import DEFAULT_MAX_REVIEW_ARTIFACT_BYTES
 
     result: list[ProviderArtifactInput] = []
     for value in values:
@@ -172,7 +174,7 @@ def _provider_artifact_inputs(
         result.append(
             ProviderArtifactInput(
                 kind=ProviderArtifactKind(raw_kind),
-                content=path.read_bytes(),
+                content=read_bounded_bytes(path, max_bytes=DEFAULT_MAX_REVIEW_ARTIFACT_BYTES),
                 provider_version=version if version_separator else "unknown",
                 selection=tuple(selection),
                 environment_digest=environment_digest,

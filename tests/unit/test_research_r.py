@@ -112,6 +112,161 @@ def test_repeated_same_line_r_calls_are_one_relationship_fact() -> None:
     assert artifact.functions[0].calls == ["helper"]
 
 
+def test_r_inventory_excludes_quoted_comment_and_raw_literal_syntax() -> None:
+    source = """#' Documents readRDS("documentation.rds")
+answer <- function(x) {
+  # readRDS("comment.rds")
+  text <- "get(ghost)"
+  raw <- r"---(
+setClass("Fiction")
+readRDS("raw.rds")
+)---"
+  second <- R"[quoted "text" and assign(fake)]"
+  third <- r"{substitute(fake)}"
+  `parse(fake)` <- 1
+  escaped <- "\\\"do.call(fake)"
+  readr::read_csv(
+    "data/a,b.csv"
+  )
+  real(x)
+  uncalled
+  (x)
+}
+"""
+    artifact = extract_r_repository({"R/core.R": source}, repository_id="pkg", source_state_id="state:r")
+
+    assert [item.name for item in artifact.functions] == ["answer"]
+    assert artifact.functions[0].calls == ["readr::read_csv", "real"]
+    assert artifact.functions[0].dynamic is False
+    assert {(item.target, item.locator.start_line) for item in artifact.calls} == {
+        ("readr::read_csv", 13),
+        ("real", 16),
+    }
+    assert [(item.operation, item.target) for item in artifact.data_declarations] == [
+        ("readr::read_csv", "data/a,b.csv")
+    ]
+    assert not any("dynamic R constructs" in item for item in artifact.limitations)
+
+
+def test_r_multiline_signatures_and_namespace_preserve_outer_argument_boundaries() -> None:
+    artifact = extract_r_repository(
+        {
+            "NAMESPACE": """# export(phantom)
+export(
+  answer, # another, comment
+  "odd,name"
+) # trailing comment
+importFrom(
+  stats,
+  median, quantile
+)
+""",
+            "R/core.R": """answer <- function(
+ x = c(1, 2), # default, comment
+ y = list(a = 1, b = 2),
+ `odd,name` = "a,b",
+ `a=b` = 2,
+ ...
+) {
+  real(x)
+}
+""",
+        },
+        repository_id="pkg",
+        source_state_id="state:r",
+    )
+
+    function = artifact.functions[0]
+    assert function.parameters == ["x", "y", "odd,name", "a=b", "..."]
+    assert function.exported is True
+    assert function.locator.start_line == 1 and function.locator.end_line == 9
+    exported = next(item for item in artifact.namespace if item.kind is RNamespaceKind.EXPORT)
+    assert exported.symbols == ["answer", "odd,name"]
+    assert exported.locator.start_line == 2 and exported.locator.end_line == 5
+    imported = next(item for item in artifact.namespace if item.kind is RNamespaceKind.IMPORT_FROM)
+    assert imported.package == "stats" and imported.symbols == ["median", "quantile"]
+
+
+def test_r_simple_unbraced_body_and_literal_do_not_capture_neighbouring_calls() -> None:
+    artifact = extract_r_repository(
+        {
+            "R/core.R": """literal <- function() "text"
+answer <- function(
+ x
+)
+  actual(
+    x
+  )
+#' @exportS3Method print thing
+internal <- function(x) { real(x) }; unrelated()
+"""
+        },
+        repository_id="pkg",
+        source_state_id="state:r",
+    )
+    functions = {item.name: item for item in artifact.functions}
+
+    assert functions["literal"].calls == []
+    assert functions["literal"].locator.end_line == 1
+    assert functions["answer"].calls == ["actual"]
+    assert functions["answer"].locator.end_line == 7
+    assert functions["internal"].calls == ["real"]
+    assert functions["internal"].exported is False
+
+
+def test_r_document_inventory_uses_only_r_chunk_source_with_original_lines() -> None:
+    source = """A document can mention readRDS("prose.rds").
+```{python}
+fake = "readRDS(ghost)"
+```
+```{r}
+answer <- function(x) {
+  readRDS("data/real.rds")
+}
+```
+"""
+    artifact = extract_r_repository({"report.qmd": source}, repository_id="pkg", source_state_id="state:r")
+
+    assert [(item.name, item.locator.start_line, item.locator.end_line) for item in artifact.functions] == [
+        ("answer", 6, 8)
+    ]
+    assert [(item.target, item.locator.start_line) for item in artifact.data_declarations] == [("data/real.rds", 7)]
+
+
+def test_empty_r_document_chunk_does_not_capture_its_fence_as_source() -> None:
+    artifact = extract_r_repository(
+        {"report.Rmd": "```{r}\n```\n```{r}\nanswer <- function() 42\n```\n"},
+        repository_id="pkg",
+        source_state_id="state:r",
+    )
+
+    assert [(item.name, item.locator.start_line) for item in artifact.functions] == [("answer", 4)]
+
+
+def test_r_data_expression_is_not_invented_as_a_literal_path() -> None:
+    artifact = extract_r_repository(
+        {"analysis.R": 'readRDS("prefix" + "suffix")\n'}, repository_id="pkg", source_state_id="state:r"
+    )
+
+    assert len(artifact.data_declarations) == 1
+    assert artifact.data_declarations[0].target is None
+
+
+def test_r_malformed_package_metadata_does_not_remove_valid_source() -> None:
+    artifact = extract_r_repository(
+        {"DESCRIPTION": "Title: no Package field\n", "R/core.R": "answer <- function() 42\n"},
+        repository_id="pkg",
+        source_state_id="state:r",
+    )
+
+    assert artifact.package is None
+    assert [item.name for item in artifact.functions] == ["answer"]
+    assert set(artifact.files) == {"DESCRIPTION", "R/core.R"}
+    assert (
+        "DESCRIPTION: package inventory unavailable (R DESCRIPTION requires a Package field)" in artifact.limitations
+    )
+
+
 def test_r_file_failure_is_isolated_and_valid_files_remain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

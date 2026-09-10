@@ -6,7 +6,7 @@ This repo uses a small test pyramid with explicit pytest markers.
 
 - `unit`: fast, isolated tests (parsing, extraction, matching, config parsing).
 - `integration`: filesystem-level tests (discovery, formatting, writing outputs).
-- `e2e`: CLI-level tests (generate/validate/estimate/pack behavior and failure modes).
+- `e2e`: review CLI, MCP transport, executable documentation, and clean-package consumer behavior.
 
 ## Commands
 
@@ -19,5 +19,11 @@ python -m pytest -m e2e
 
 ## Fixtures
 
-- `tests/fixtures/project_src/src/`: container-layout fixture (regular package, namespace package, top-level module, excluded subtree).
-- `tests/fixtures/sample_package/`: symbol extraction fixture focused on Python constructs.
+- `tests/fixtures/research/mixed_project/`: Python/R source, notebooks, testthat, workflows, and captured tool results.
+- `tests/fixtures/agentic_workflow/`: held-out review tasks with known definitions, consumers, tests, and documentation.
+- `tests/fixtures/sessions/`: canonical portable-session artifacts.
+
+Regression tests also construct temporary repositories for Python scopes and
+import ambiguity, R lexical boundaries, changing source, symlink containment,
+bounded artifact reads, and large inventories. These tests inspect R source
+without executing it; they do not require an R runtime.

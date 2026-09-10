@@ -24,6 +24,14 @@ repository, provider input, or query. Capture a fresh session and rebuild the
 derived dossier, similarity projection, or overlay evaluation. Keep an old
 decision as history, but never present it as current.
 
+## Source changes during review
+
+`source_state_changed` means files or Git state changed while `review start`
+was acquiring evidence. Let edits and file generation finish, then retry against
+a stable checkout. The rejected attempt does not publish a session containing
+mixed source states. An immutable checkout provides the strongest snapshot
+boundary when other processes may modify files concurrently.
+
 ## A session store is interrupted or corrupt
 
 Validate a portable artifact without mutation:

@@ -7,10 +7,11 @@ import re
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from anatomize._artifacts import BoundedJsonError, JsonLimits, content_id, parse_bounded_json_object, sha256_digest
 from anatomize._errors import AnatomizeError
+from anatomize._r_syntax import R_CALL_PATTERN, r_code_mask
 from anatomize.evidence import ContentClass, EvidenceModel, RepositoryEvidence, validate_repository_path
 from anatomize.providers import ProviderEnvelope
 
@@ -122,10 +123,18 @@ class NotebookArtifact(EvidenceModel):
 class NotebookExecutionObservation(EvidenceModel):
     cell_key: str
     status: Literal["passed", "failed", "skipped", "unknown"]
-    execution_count: int | None = Field(default=None, ge=0)
+    execution_count: int | None = Field(default=None, ge=0, strict=True)
     output_digests: list[str] = Field(default_factory=list)
     error_type: str | None = None
     error_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_observation(self) -> NotebookExecutionObservation:
+        if not self.cell_key:
+            raise ValueError("notebook execution requires a nonempty cell key")
+        if any(re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None for value in self.output_digests):
+            raise ValueError("notebook execution output digests must be SHA-256 identities")
+        return self
 
 
 class NotebookExecutionArtifact(EvidenceModel):
@@ -142,6 +151,13 @@ class NotebookExecutionArtifact(EvidenceModel):
     observations: list[NotebookExecutionObservation]
     limitations: list[str] = Field(default_factory=list)
     source_artifact_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_execution(self) -> NotebookExecutionArtifact:
+        keys = [item.cell_key for item in self.observations]
+        if len(keys) != len(set(keys)):
+            raise ValueError("notebook execution cell keys must be unique")
+        return self
 
 
 class CellDeltaKind(str, Enum):
@@ -233,8 +249,17 @@ def parse_executable_document(
     ordinal = 0
     index = 0
     while index < len(lines):
-        match = re.match(r"^```+\{([A-Za-z0-9_+-]+)(?:[\s,]+([^}]+))?\}\s*$", lines[index])
+        opening = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", lines[index])
+        if opening is None:
+            index += 1
+            continue
+        fence, info = opening.groups()
+        closing = re.compile(r"^ {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}\s*$")
+        match = re.fullmatch(r"\{([A-Za-z0-9_+-]+)(?:[\s,]+([^}]+))?\}\s*", info.strip())
         if match is None:
+            index += 1
+            while index < len(lines) and not closing.fullmatch(lines[index]):
+                index += 1
             index += 1
             continue
         if index > prose_start:
@@ -246,7 +271,7 @@ def parse_executable_document(
         start = index + 1
         index += 1
         body_start = index
-        while index < len(lines) and not lines[index].startswith("```"):
+        while index < len(lines) and not closing.fullmatch(lines[index]):
             index += 1
         body = "\n".join(lines[body_start:index])
         label_match = re.search(r"(?m)^#\|\s*label:\s*([\w.-]+)\s*$", body)
@@ -314,42 +339,37 @@ def parse_notebook_execution(
     payload = _bounded_json(raw, max_bytes, "notebook execution")
     records = payload.get("cells")
     status = payload.get("status")
-    if not isinstance(records, list) or status not in {"complete", "partial", "failed", "unavailable"}:
+    if (
+        not isinstance(records, list)
+        or not isinstance(status, str)
+        or status not in {"complete", "partial", "failed", "unavailable"}
+    ):
         raise NotebookArtifactError(
             "notebook_execution_shape_invalid",
             "Execution artifact requires status and cells",
             remediation="Export a supported execution summary.",
         )
-    observations = []
-    for value in records:
-        if not isinstance(value, dict) or not isinstance(value.get("cell_key"), str):
-            continue
-        output_digests = value.get("output_digests", [])
-        observations.append(
-            NotebookExecutionObservation(
-                cell_key=value["cell_key"],
-                status=str(value.get("status", "unknown")),
-                execution_count=value.get("execution_count")
-                if isinstance(value.get("execution_count"), int)
-                else None,
-                output_digests=[item for item in output_digests if isinstance(item, str)],
-                error_type=_string(value.get("error_type")),
-                error_digest=_string(value.get("error_digest")),
-            )
+    try:
+        observations = [NotebookExecutionObservation.model_validate(value, strict=True) for value in records]
+        return NotebookExecutionArtifact(
+            repository_id=repository_id,
+            source_state_id=source_state_id,
+            notebook_document_digest=notebook_document_digest,
+            provider_run_id=provider_run_id,
+            provider_id=provider_id,
+            provider_version=provider_version,
+            environment_digest=environment_digest,
+            status=status,
+            observations=observations,
+            limitations=["Execution applies only to the captured source, environment, selection, and provider run."],
+            source_artifact_digest=sha256_digest(raw),
         )
-    return NotebookExecutionArtifact(
-        repository_id=repository_id,
-        source_state_id=source_state_id,
-        notebook_document_digest=notebook_document_digest,
-        provider_run_id=provider_run_id,
-        provider_id=provider_id,
-        provider_version=provider_version,
-        environment_digest=environment_digest,
-        status=status,
-        observations=observations,
-        limitations=["Execution applies only to the captured source, environment, selection, and provider run."],
-        source_artifact_digest=sha256_digest(raw),
-    )
+    except ValidationError as error:
+        raise NotebookArtifactError(
+            "notebook_execution_invalid",
+            f"Execution artifact failed validation ({error.error_count()} errors)",
+            remediation="Export unique, typed cell records with valid output digests.",
+        ) from error
 
 
 def compare_notebooks(before: NotebookArtifact, after: NotebookArtifact) -> list[NotebookCellDelta]:
@@ -466,11 +486,14 @@ def notebook_execution_provider_envelope(
 
     if (
         artifact.repository_id != notebook.repository_id
+        or notebook.repository_id != baseline.repository_id
         or artifact.source_state_id != notebook.source_state_id
         or artifact.notebook_document_digest != notebook.document_digest
     ):
         raise ValueError("notebook execution does not match the selected static notebook")
-    state = next(item for item in baseline.states if item.state_id == notebook.source_state_id)
+    state = next((item for item in baseline.states if item.state_id == notebook.source_state_id), None)
+    if state is None:
+        raise ValueError("notebook execution source state is absent from baseline evidence")
     subject = next(
         (
             item
@@ -481,6 +504,17 @@ def notebook_execution_provider_envelope(
     )
     if subject is None:
         raise ValueError("notebook execution requires its file in baseline evidence")
+    if (
+        subject.digest is None
+        or subject.digest.removeprefix("sha256:") != notebook.document_digest.removeprefix("sha256:")
+    ):
+        raise ValueError("notebook document digest differs from its baseline file")
+    executable_keys = {item.cell_key for item in notebook.cells if item.kind is NotebookCellKind.CODE}
+    observed_keys = {item.cell_key for item in artifact.observations}
+    if observed_keys.difference(executable_keys):
+        raise ValueError("notebook execution references cells absent from its executable source")
+    if artifact.status == "complete" and observed_keys != executable_keys:
+        raise ValueError("complete notebook execution must cover every executable cell")
     builder = ProviderBatchBuilder(baseline)
     builder.repository_entity(state)
     builder.include_baseline_entity(subject)
@@ -590,6 +624,12 @@ def _jupyter_cell(
 ) -> NotebookCell:
     source = _multiline(value.get("source"))
     raw_kind = value.get("cell_type")
+    if not isinstance(raw_kind, str):
+        raise NotebookArtifactError(
+            "notebook_cell_type_invalid",
+            f"Cell {ordinal} requires a string cell_type",
+            remediation="Validate the notebook with nbformat and retry.",
+        )
     kind = (
         NotebookCellKind(raw_kind) if raw_kind in {item.value for item in NotebookCellKind} else NotebookCellKind.RAW
     )
@@ -734,7 +774,7 @@ def _source_semantics(source: str, language: str | None, kind: NotebookCellKind)
     if language == "python":
         try:
             tree = ast.parse(source)
-        except SyntaxError:
+        except (SyntaxError, RecursionError):
             return [], []
         definitions = sorted(
             item.name
@@ -746,8 +786,9 @@ def _source_semantics(source: str, language: str | None, kind: NotebookCellKind)
         )
         return definitions, references
     if language in {"r", "R"}:
-        definitions = sorted(set(re.findall(r"(?m)^\s*([A-Za-z.][\w.]*)\s*<-", source)))
-        references = sorted(set(re.findall(r"\b([A-Za-z.][\w.]*)\s*\(", source)))
+        masked = r_code_mask(source)
+        definitions = sorted(set(re.findall(r"(?m)^\s*([A-Za-z.][\w.]*)\s*<-", masked)))
+        references = sorted(set(R_CALL_PATTERN.findall(masked)))
         return definitions, references
     return [], []
 

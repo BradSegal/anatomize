@@ -7,7 +7,13 @@ from typing import Any, TypeVar
 
 from pydantic import ValidationError
 
-from anatomize._artifacts import BoundedJsonError, JsonLimits, atomic_write_bytes, parse_bounded_json_object
+from anatomize._artifacts import (
+    BoundedJsonError,
+    JsonLimits,
+    atomic_write_bytes,
+    parse_bounded_json_object,
+    read_bounded_bytes,
+)
 from anatomize._errors import AnatomizeError
 from anatomize.dossiers.models import (
     DOSSIER_ARTIFACT_TYPE,
@@ -141,16 +147,13 @@ def _parse(
 
 def _read(path: Path, *, max_bytes: int, label: str) -> bytes:
     try:
-        size = path.stat().st_size
-        if size > max_bytes:
-            raise DossierArtifactError(
-                f"{label.replace(' ', '_')}_too_large",
-                f"{label.title()} is {size} bytes; limit is {max_bytes}",
-                remediation="Raise the explicit trusted limit or regenerate a bounded artifact.",
-            )
-        return path.read_bytes()
-    except DossierArtifactError:
-        raise
+        return read_bounded_bytes(path, max_bytes=max_bytes)
+    except BoundedJsonError as error:
+        raise DossierArtifactError(
+            f"{label.replace(' ', '_')}_{error.code}",
+            f"{label.title()} {error}",
+            remediation="Raise the explicit trusted limit or regenerate a bounded artifact.",
+        ) from error
     except OSError as error:
         raise DossierArtifactError(
             f"{label.replace(' ', '_')}_unreadable",

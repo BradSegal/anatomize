@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented in this file.
 
+## 2.1.1 - 2026-09-11
+
+### Fixed
+
+- Resolve Python imports and references conservatively across relative imports,
+  nested scopes, decorators, comprehensions, and malformed source files.
+- Improve R syntax, package metadata, test discovery, and executable R chunks
+  in R Markdown and Quarto documents without requiring an R runtime.
+- Validate notebook execution evidence against executable cells and source
+  digests; reject stale or inconsistent evidence.
+- Enforce bounded artifact reads, finite numeric values, source integrity, and
+  symlink containment; recover safely from corrupt session pointers.
+
+### Performance
+
+- Stream file hashing and prune excluded directories before traversal.
+- Index dossier lookups and avoid repeated payload serialization.
+- Validate session graphs iteratively and remove the global decoded-blob cache.
+
+### Assurance
+
+- Add regression coverage for Python/R boundaries, malformed artifacts,
+  source drift, session recovery, and repository scalability.
+- Document language support and conservative degradation behavior.
+
 ## 2.1.0 - 2026-08-30
 
 ### Added
